@@ -61,7 +61,7 @@ class NonCondWaveNet(tf.keras.Model):
       prediction = self(x, training=training)
       prediction = tf.random.categorical(tf.math.log(prediction[:,-1,:]), 1)
       
-      sample = tf.gather(np.linspace(-1,1,256),prediction)
+      sample = tf.gather(np.linspace(-1,1,256,dtype=np.float32),prediction)
       x = tf.concat([x[:,1:,:], sample], axis=1)
       outputs.append(sample)
 
