@@ -14,14 +14,21 @@ class NonCondWaveNet(tf.keras.Model):
     super().__init__()
 
     #compute dilatations for layers
-    assert math.log(dilatation_bound,kernel_size) % 1 == 0, "Dilatation bound must be power of kernel_size."
-    dilatations = [int(kernel_size**(i%math.log(dilatation_bound,kernel_size))) for i in range(layers)]
+    if math.log(dilatation_bound,kernel_size) % 1 == 0:
+      raise ValueError('Dilatation bound must be power of kernel_size.')
+    dilatations = [int(kernel_size**(i%math.log(dilatation_bound,kernel_size)))
+                   for i in range(layers)]
 
-    self.wavenet_layers = [WaveNetLayer(dil, kernel_size, channels) for dil in dilatations]
-    self.pre_final = tf.keras.layers.Conv1D(kernel_size=1, filters=channels, padding='same')
-    self.final = tf.keras.layers.Conv1D(kernel_size=1, filters=256, padding='same')
+    self.wavenet_layers = [WaveNetLayer(dil, kernel_size, channels)
+                           for dil in dilatations]
+    self.pre_final = tf.keras.layers.Conv1D(kernel_size=1,
+                                            filters=channels,
+                                            padding='same')
+    self.final = tf.keras.layers.Conv1D(kernel_size=1,
+                                        filters=256,
+                                        padding='same')
     self.softmax = tf.keras.layers.Softmax(axis=-1)
-  
+
     self.discretization =  tf.keras.layers.Discretization(
       bin_boundaries=np.linspace(-1,1,256)[1:-1],
       output_mode='int',) # using int because one_hot doesn't work
@@ -52,14 +59,16 @@ class NonCondWaveNet(tf.keras.Model):
   @tf.function
   def _generate_one_sample(self,x, training=False):
     prediction = self(x, training=training)
-    prediction = tf.random.categorical(tf.math.log(prediction[:,-1,:]), 1)
-      
-    sample = tf.expand_dims(tf.gather(np.linspace(-1,1,256,dtype=np.float32),prediction),axis=-1)
+    prediction = tf.random.categorical(
+      tf.math.log(prediction[:,-1,:]), 1)
+
+    sample = tf.expand_dims(tf.gather(
+      np.linspace(-1,1,256,dtype=np.float32),prediction),axis=-1)
     return sample
 
   def generate(self, length, batch_size=1, training=False):
     if training:
-      raise ValueError("This method should not be called during training.")
+      raise ValueError('This method should not be called during training.')
     input_shape= (batch_size,*self._build_input_shape[1:])
     x = tf.random.normal(input_shape)
     outputs = []
