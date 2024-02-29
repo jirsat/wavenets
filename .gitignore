@@ -161,3 +161,10 @@ cython_debug/
 
 # Datasets
 datasets
+
+# VSCode specific
+.vscode
+
+# generated files and folders
+tmp/
+logs/
