@@ -20,7 +20,7 @@ class WaveNetLayer(tf.keras.layers.Layer):
             padding='same')
         
 
-    def call(self, inputs, training=False):
+    def call(self, inputs=False):
         x = inputs
 
         # create residual connection
