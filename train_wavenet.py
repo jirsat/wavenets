@@ -13,12 +13,12 @@ from src.wavenet.non_cond_wavenet import NonCondWaveNet
 config = {
     'kernel_size': 2,
     'channels': 32,
-    'layers': 10,
+    'layers': 6,
     'dilatation_bound': 512,
-    'batch_size': 16,
+    'batch_size': 24,
     'epochs': 1,
     'lr': 0.001,
-    'recording_length': 48000,
+    'recording_length': 24000,
 }
 
 # Load data
@@ -80,16 +80,36 @@ test_dataset = test_dataset.map(preprocess).unbatch().batch(config['batch_size']
 model = NonCondWaveNet(config['kernel_size'], config['channels'], config['layers'], config['dilatation_bound'])
 
 # Compile model
+callbacks = [
+    tf.keras.callbacks.ModelCheckpoint(
+        filepath='./tmp/uncond_wavenet',
+        save_weights_only=False,
+        monitor='categorical_accuracy',
+        mode='max',
+        save_best_only=True),
+    
+
+]
 model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
               loss=tf.keras.losses.CategoricalCrossentropy(),
-              metrics=[tf.keras.metrics.CategoricalAccuracy()])
+              metrics=[tf.keras.metrics.CategoricalAccuracy()],
+              callbacks=callbacks)
 
 # Train model
 model.fit(train_dataset, epochs=config['epochs'])
 
 # Generate samples
+"""
+# Generate samples
 tic = time.time()
 samples = model.generate(config['recording_length'])
 tictoc = tic-time.time()
-print(f'Generation took {tictoc}s with speed {config["recording_length"]/tictoc} samples/s')
+print(f'Generation took {tictoc}s')
+print(f'Speed of generation was {config["recording_length"]/tictoc} samples/s')
 print(samples)
+"""
+
+# print receptive field
+print("Receptive field")
+print(model.receptive_field,' samples')
+print(model.compute_receptive_field(FS),' seconds')

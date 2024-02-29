@@ -50,6 +50,13 @@ class NonCondWaveNet(tf.keras.Model):
     return x
 
   @tf.function
+  def _generate_one_sample(self,x, training=False):
+    prediction = self(x, training=training)
+    prediction = tf.random.categorical(tf.math.log(prediction[:,-1,:]), 1)
+      
+    sample = tf.expand_dims(tf.gather(np.linspace(-1,1,256,dtype=np.float32),prediction),axis=-1)
+    return sample
+
   def generate(self, length, batch_size=1, training=False):
     if training:
       raise ValueError("This method should not be called during training.")
@@ -58,10 +65,7 @@ class NonCondWaveNet(tf.keras.Model):
     outputs = []
 
     for _ in range(length):
-      prediction = self(x, training=training)
-      prediction = tf.random.categorical(tf.math.log(prediction[:,-1,:]), 1)
-      
-      sample = tf.expand_dims(tf.gather(np.linspace(-1,1,256,dtype=np.float32),prediction),axis=-1)
+      sample = self._generate_one_sample(x)
       x = tf.concat([x[:,1:,:], sample], axis=1)
       outputs.append(sample)
 
