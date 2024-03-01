@@ -15,7 +15,7 @@ class WaveNetLayer(tf.keras.layers.Layer):
       kernel (int): Kernel size for convolution
       channels (int): Number of channels in convolution
     """
-    super().__init__()
+    super().__init__(**kwargs)
     self.dilated_conv = tf.keras.layers.Conv1D(
       filters=2*channels,
       kernel_size=kernel,
@@ -80,7 +80,7 @@ class CondWaveNetLayer(tf.keras.layers.Layer):
       kernel (int): Kernel size for convolution
       channels (int): Number of channels in convolution
     """
-    super().__init__()
+    super().__init__(**kwargs)
     self.dilated_conv = tf.keras.layers.Conv1D(
       filters=2*channels,
       kernel_size=kernel,

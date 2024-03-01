@@ -56,8 +56,8 @@ class GlobCondWaveNet(tf.keras.Model):
     Returns:
       tf.Tensor: Output tensor"""
     x, cond = inputs
-    cond = tf.repeat(cond,repeats=x.shape[-1],axis=-1)
-    cond = tf.transpose(cond, perm=[0,2,1])
+    cond = tf.expand_dims(cond, axis=1)
+    cond = tf.repeat(cond,repeats=x.shape[-1],axis=1)
     aggregate = None
 
 
@@ -137,7 +137,7 @@ class GlobCondWaveNet(tf.keras.Model):
         should be of shape batch_size x length+1 x 1 and the condition
         of shape batch_size x encoding_size."""
     x, condition = data
-    target = self.discretization(x[:, 1:], 256)
+    target = self.discretization(x[:, 1:])
     inputs = x[:, :-1]
 
     with tf.GradientTape() as tape:

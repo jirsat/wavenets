@@ -11,8 +11,8 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 # import tensorflow after setting environment variables
 import tensorflow as tf
 import tensorflow_datasets as tfds
-from src.wavenet.non_cond_wavenet import NonCondWaveNet
-from src.callbacks import UnconditionedSoundCallback
+from src.wavenet.glob_cond_wavenet import GlobCondWaveNet
+from src.callbacks import ConditionedSoundCallback
 # pylint: enable=wrong-import-position
 
 
@@ -82,27 +82,28 @@ def preprocess(inputs):
 train_dataset = train_dataset.map(preprocess).unbatch()
 train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
 test_dataset = test_dataset.map(preprocess).rebatch(config['batch_size'])
-example_batch = train_dataset.take(1).get_single_element()
+example_batch,example_cond = train_dataset.take(1).get_single_element()
 
 # Create model
-model = NonCondWaveNet(config['kernel_size'], config['channels'],
+model = GlobCondWaveNet(config['kernel_size'], config['channels'],
                        config['layers'], config['dilatation_bound'])
 
 # Compile model
 callbacks = [
   tf.keras.callbacks.ModelCheckpoint(
-    filepath='./tmp/uncond_wavenet',
+    filepath='./tmp/cond_wavenet',
     save_weights_only=False,
     monitor='sparse_categorical_accuracy',
     mode='max',
     save_best_only=True),
-  UnconditionedSoundCallback(
-    './logs/wavenet',
+  ConditionedSoundCallback(
+    './logs/condwavenet',
     frequency=FS,
     epoch_frequency=10,
-    samples=FS*4
+    samples=FS*4,
+    condition=example_cond
   ),
-  tf.keras.callbacks.TensorBoard(log_dir='./logs/wavenet',
+  tf.keras.callbacks.TensorBoard(log_dir='./logs/condwavenet',
                                  profile_batch=(10,15),
                                  write_graph=False),
 ]
@@ -112,7 +113,7 @@ model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
               metrics=[tf.keras.metrics.SparseCategoricalAccuracy()])
 
 # build the model
-model.call(example_batch[:,:-1])
+model.call((example_batch[:,:-1],example_cond))
 
 # print receptive field
 print('Receptive field')
