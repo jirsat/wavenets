@@ -10,13 +10,23 @@ from src.wavenet.layers import WaveNetLayer
 class NonCondWaveNet(tf.keras.Model):
   """WaveNet model without conditioning."""
 
-  def __init__(self, kernel_size, channels, layers, dilatation_bound=512):g 
+  def __init__(self, kernel_size, channels, layers, dilatation_bound=512):
+    """Initialize WaveNet model.
+
+    Args:
+      kernel_size (int): Kernel size for dilated convolutions
+      channels (int): Number of channels in dilated convolutions
+      layers (int): Number of layers in WaveNet
+      dilatation_bound (int): Maximum dilatation for layers
+    """
     super().__init__()
 
     #compute dilatations for layers
     if math.log(dilatation_bound,kernel_size) % 1 != 0:
       raise ValueError('Dilatation bound must be power of kernel_size.')
-    dilatations = [int(kernel_size**(i%(math.log(dilatation_bound,kernel_size)+1)))
+
+    max_power = math.log(dilatation_bound,kernel_size)+1
+    dilatations = [int(kernel_size**(i % max_power))
                    for i in range(layers)]
 
     self.wavenet_layers = [WaveNetLayer(dil, kernel_size, channels)
@@ -28,18 +38,25 @@ class NonCondWaveNet(tf.keras.Model):
                                         filters=256,
                                         padding='same')
     self.softmax = tf.keras.layers.Softmax(axis=-1)
- 
+
     self.discretization =  tf.keras.layers.Discretization(
       bin_boundaries=np.linspace(-1,1,256)[1:-1],
       output_mode='int',)
 
-    # TODO: compute receptive field
+    # TODO: check compute receptive field
     self.receptive_field = 0
     for dil in dilatations:
       self.receptive_field += dil*(kernel_size-1)
 
   @tf.function
   def call(self, inputs, training=False):
+    """Call the model on input.
+
+    Args:
+      inputs (tf.Tensor): Input tensor
+      training (bool): Whether the model is training
+    Returns:
+      tf.Tensor: Output tensor"""
     x = inputs
     aggregate = None
     for layer in self.wavenet_layers:
@@ -59,6 +76,17 @@ class NonCondWaveNet(tf.keras.Model):
 
   @tf.function
   def _generate_one_sample(self,x, training=False):
+    """Generate one sample from model.
+
+    This method is used for generating samples during inference and should
+    not be called directly. This function is decorated with tf.function
+    decorator to speed up the computation.
+    
+    Args:
+      x (tf.Tensor): Input tensor
+      training (bool): Whether the model is training
+    Returns:
+      tf.Tensor: Output tensor"""
     prediction = self(x, training=training)
     prediction = tf.random.categorical(
       tf.math.log(prediction[:,-1,:]), 1)
@@ -68,6 +96,20 @@ class NonCondWaveNet(tf.keras.Model):
     return sample
 
   def generate(self, length, batch_size=1, training=False):
+    """Generate samples from model.
+    
+    This method is used for generating samples during inference and
+    can be called directly. The method generates samples from random
+    noise and returns the generated samples. It is not decorated with
+    tf.function decorator to allow for dynamic length of generated
+    samples and to speed up the first call.
+    
+    Args:
+      length (int): Length of generated recordings
+      batch_size (int): Number of recordings to generate
+      training (bool): Whether the model is training
+    Returns:
+      tf.Tensor: Output tensor"""
     if training:
       raise ValueError('This method should not be called during training.')
     input_shape= (batch_size,*self._build_input_shape[1:])
@@ -83,6 +125,11 @@ class NonCondWaveNet(tf.keras.Model):
 
   @tf.function
   def train_step(self, data):
+    """Train the model on input data.
+    
+    Args:
+      data (tf.Tensor): Input data which should be of shape
+        batch_size x length+1 x 1"""
     target = data[:, 1:,0]
     target = self.discretization(target)
     inputs = data[:, :-1,:]
@@ -96,6 +143,10 @@ class NonCondWaveNet(tf.keras.Model):
     return {m.name: m.result() for m in self.metrics}
 
   def compute_receptive_field(self,sampling_frequency):
-    """Compute the receptive field of the WaveNet model."""
-    return self.receptive_field/sampling_frequency
+    """Compute the receptive field of the WaveNet model.
     
+    Args:
+      sampling_frequency (int): Sampling frequency of the model
+    Returns:
+      float: Receptive field in seconds"""
+    return self.receptive_field/sampling_frequency
