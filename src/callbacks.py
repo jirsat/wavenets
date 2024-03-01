@@ -32,7 +32,7 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
                                   batch_size=5)
       with self.writer.as_default():
         tf.summary.audio('generated',
-             data=batch2tf_wav(batch),
+             data=batch,
              step=epoch,
              sample_rate=self.frequency,
              encoding='wav',

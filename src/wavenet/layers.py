@@ -12,14 +12,14 @@ class WaveNetLayer(tf.keras.layers.Layer):
     self.dilated_conv = tf.keras.layers.Conv1D(
       filters=2*channels,
       kernel_size=kernel,
-      dilation_rate=2*dilation_rate,
+      dilation_rate=dilation_rate,
       padding='causal')
     self.conv1 = tf.keras.layers.Conv1D(
       filters=channels,
       kernel_size=1,
       padding='same')
 
-
+  @tf.function
   def call(self, inputs=False):
     x = inputs
 

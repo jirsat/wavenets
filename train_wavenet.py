@@ -15,15 +15,16 @@ from src.wavenet.non_cond_wavenet import NonCondWaveNet
 from src.callbacks import UnconditionedSoundCallback
 # pylint: enable=wrong-import-position
 
+
 config = {
-    'kernel_size': 2,
+    'kernel_size': 4,
     'channels': 32,
-    'layers': 6,
-    'dilatation_bound': 512,
-    'batch_size': 24,
-    'epochs': 1,
-    'lr': 0.001,
-    'recording_length': 24000,
+    'layers': 12,
+    'dilatation_bound': 1024,
+    'batch_size': 32,
+    'epochs': 1000,
+    'lr': 0.0001,
+    'recording_length': 20000,
 }
 
 # Load data
@@ -89,20 +90,23 @@ callbacks = [
   tf.keras.callbacks.ModelCheckpoint(
     filepath='./tmp/uncond_wavenet',
     save_weights_only=False,
-    monitor='categorical_accuracy',
+    monitor='sparse_categorical_accuracy',
     mode='max',
     save_best_only=True),
   UnconditionedSoundCallback(
     './logs/wavenet',
     frequency=FS,
     epoch_frequency=10,
-    samples=config['recording_length']
-  )
+    samples=FS*4
+  ),
+  tf.keras.callbacks.TensorBoard(log_dir='./logs/wavenet',
+                                 profile_batch=(10,15),
+                                 write_graph=False),
 ]
 
 model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
-              loss=tf.keras.losses.CategoricalCrossentropy(),
-              metrics=[tf.keras.metrics.CategoricalAccuracy()])
+              loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+              metrics=[tf.keras.metrics.SparseCategoricalAccuracy()])
 
 # build the model
 model.call(example_batch[:,:-1])

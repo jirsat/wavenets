@@ -10,13 +10,13 @@ from src.wavenet.layers import WaveNetLayer
 class NonCondWaveNet(tf.keras.Model):
   """WaveNet model without conditioning."""
 
-  def __init__(self, kernel_size, channels, layers, dilatation_bound=512):
+  def __init__(self, kernel_size, channels, layers, dilatation_bound=512):g 
     super().__init__()
 
     #compute dilatations for layers
-    if math.log(dilatation_bound,kernel_size) % 1 == 0:
+    if math.log(dilatation_bound,kernel_size) % 1 != 0:
       raise ValueError('Dilatation bound must be power of kernel_size.')
-    dilatations = [int(kernel_size**(i%math.log(dilatation_bound,kernel_size)))
+    dilatations = [int(kernel_size**(i%(math.log(dilatation_bound,kernel_size)+1)))
                    for i in range(layers)]
 
     self.wavenet_layers = [WaveNetLayer(dil, kernel_size, channels)
@@ -28,16 +28,17 @@ class NonCondWaveNet(tf.keras.Model):
                                         filters=256,
                                         padding='same')
     self.softmax = tf.keras.layers.Softmax(axis=-1)
-
+ 
     self.discretization =  tf.keras.layers.Discretization(
       bin_boundaries=np.linspace(-1,1,256)[1:-1],
-      output_mode='int',) # using int because one_hot doesn't work
+      output_mode='int',)
 
     # TODO: compute receptive field
     self.receptive_field = 0
     for dil in dilatations:
       self.receptive_field += dil*(kernel_size-1)
 
+  @tf.function
   def call(self, inputs, training=False):
     x = inputs
     aggregate = None
@@ -80,10 +81,10 @@ class NonCondWaveNet(tf.keras.Model):
 
     return tf.concat(outputs, axis=1)
 
+  @tf.function
   def train_step(self, data):
     target = data[:, 1:,0]
     target = self.discretization(target)
-    target = tf.one_hot(target,256)
     inputs = data[:, :-1,:]
 
     with tf.GradientTape() as tape:
