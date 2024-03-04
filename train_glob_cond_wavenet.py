@@ -24,7 +24,7 @@ config = {
     'batch_size': 128,
     'epochs': 1000,
     'lr': 0.0001,
-    'recording_length': 12000,
+    'recording_length': 14000,
 }
 
 # Load data
