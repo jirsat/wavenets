@@ -1,4 +1,4 @@
-"""File for training the WaveNet model."""
+"""File for training the FastWaveNet model."""
 
 import os
 import time
@@ -10,32 +10,20 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 # pylint: disable=wrong-import-position
 # import tensorflow after setting environment variables
 import tensorflow as tf
-from src.wavenet.non_cond_wavenet import NonCondWaveNet
+from src.fastwavenet.non_cond_wavenet import NonCondWaveNet
 from src.callbacks import UnconditionedSoundCallback
 # pylint: enable=wrong-import-position
 
-# select second GPU
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-  # Restrict TensorFlow to only use the second GPU
-  try:
-    tf.config.experimental.set_visible_devices(gpus[1], 'GPU')
-    logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-    print(len(gpus), 'Physical GPUs,', len(logical_gpus), 'Logical GPU')
-  except RuntimeError as e:
-    # Visible devices must be set before GPUs have been initialized
-    print(e)
-
 
 config = {
-    'kernel_size': 2,
+    'kernel_size': 4,
     'channels': 32,
     'layers': 12,
     'dilatation_bound': 1024,
     'batch_size': 32,
-    'epochs': 1000,
+    'epochs': 2,
     'lr': 0.0001,
-    'recording_length': 4000,
+    'recording_length': 20000,
 }
 
 # Load data
@@ -59,6 +47,10 @@ train_dataset = dataset.filter(lambda x: not filter_fn(x))
 # Preprocess data
 @tf.function(input_signature=[tf.TensorSpec(shape=(None,1), dtype=tf.float32)])
 def convert_and_split(x):
+  # convert 16bit integers (passed as floats) to floats [-1, 1]
+  # the integers are from -2^15 to 2^15-1, therefore we ony need to divide them
+  x = (x / (2.0**(BITS-1)))
+
   # apply the mu-law as in the original paper
   x = tf.sign(x) * (tf.math.log(1.0 + 255.0*tf.abs(x)) / tf.math.log(256.0))
 
@@ -70,8 +62,10 @@ def convert_and_split(x):
   return x
 
 def preprocess(inputs):
+  # as we are not using conditioning, we can just take the audio
+  x = tf.cast(inputs['speech'],tf.float32)
+
   # add channel dimension
-  x = inputs['speech']
   x = tf.expand_dims(x, axis=-1)
 
   # cut the audio into chunks of length recording_length
@@ -92,18 +86,18 @@ model = NonCondWaveNet(config['kernel_size'], config['channels'],
 # Compile model
 callbacks = [
   tf.keras.callbacks.ModelCheckpoint(
-    filepath='./tmp/uncond_wavenet_8000',
-    save_weights_only=False,
+    filepath='./tmp/uncond_fastwavenet_8000',
+    save_weights_only=True,
     monitor='sparse_categorical_accuracy',
     mode='max',
     save_best_only=True),
   UnconditionedSoundCallback(
-    './logs/wavenet_8000',
+    './logs/fastwavenet_8000',
     frequency=FS,
     epoch_frequency=10,
     samples=FS*4
   ),
-  tf.keras.callbacks.TensorBoard(log_dir='./logs/wavenet_8000',
+  tf.keras.callbacks.TensorBoard(log_dir='./logs/fastwavenet_8000',
                                  profile_batch=(10,15),
                                  write_graph=False),
 ]

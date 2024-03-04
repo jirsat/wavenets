@@ -1,4 +1,4 @@
-"""File for training the WaveNet model."""
+"""File for training the FastWaveNet model."""
 
 import os
 import time
@@ -10,37 +10,27 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 # pylint: disable=wrong-import-position
 # import tensorflow after setting environment variables
 import tensorflow as tf
-from src.wavenet.non_cond_wavenet import NonCondWaveNet
-from src.callbacks import UnconditionedSoundCallback
+import tensorflow_datasets as tfds
+from src.fastwavenet.glob_cond_wavenet import GlobCondWaveNet
+from src.callbacks import ConditionedSoundCallback
 # pylint: enable=wrong-import-position
-
-# select second GPU
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-  # Restrict TensorFlow to only use the second GPU
-  try:
-    tf.config.experimental.set_visible_devices(gpus[1], 'GPU')
-    logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-    print(len(gpus), 'Physical GPUs,', len(logical_gpus), 'Logical GPU')
-  except RuntimeError as e:
-    # Visible devices must be set before GPUs have been initialized
-    print(e)
 
 
 config = {
-    'kernel_size': 2,
+    'kernel_size': 4,
     'channels': 32,
     'layers': 12,
     'dilatation_bound': 1024,
-    'batch_size': 32,
-    'epochs': 1000,
+    'batch_size': 128,
+    'epochs': 2, # TODO: 1000
     'lr': 0.0001,
-    'recording_length': 4000,
+    'recording_length': 14000,
 }
 
 # Load data
-dataset = tf.data.Dataset.load('./datasets/vctk8000')
-FS = 8000
+dataset = tfds.load('vctk', split='train', shuffle_files=False,
+                    data_dir='./datasets/vctk')
+FS = 48000
 BITS = 16
 
 # take 1 male (59 ~ p286) and 1 female (4 ~ p229) speaker
@@ -59,6 +49,10 @@ train_dataset = dataset.filter(lambda x: not filter_fn(x))
 # Preprocess data
 @tf.function(input_signature=[tf.TensorSpec(shape=(None,1), dtype=tf.float32)])
 def convert_and_split(x):
+  # convert 16bit integers (passed as floats) to floats [-1, 1]
+  # the integers are from -2^15 to 2^15-1, therefore we ony need to divide them
+  x = (x / (2.0**(BITS-1)))
+
   # apply the mu-law as in the original paper
   x = tf.sign(x) * (tf.math.log(1.0 + 255.0*tf.abs(x)) / tf.math.log(256.0))
 
@@ -70,40 +64,46 @@ def convert_and_split(x):
   return x
 
 def preprocess(inputs):
+  # as we are not using conditioning, we can just take the audio
+  x = tf.cast(inputs['speech'],tf.float32)
+
   # add channel dimension
-  x = inputs['speech']
   x = tf.expand_dims(x, axis=-1)
 
   # cut the audio into chunks of length recording_length
   x = convert_and_split(x)
 
-  # the one-hot encoding is done in the training loopd
-  return x
+  # prepare the condition
+  condition = tf.one_hot(inputs['gender'], 2)
+  condition = tf.broadcast_to(condition, [tf.shape(x)[0],2])
+
+  return (x, condition)
 
 train_dataset = train_dataset.map(preprocess).unbatch()
 train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
 test_dataset = test_dataset.map(preprocess).rebatch(config['batch_size'])
-example_batch = train_dataset.take(1).get_single_element()
+example_batch,example_cond = train_dataset.take(1).get_single_element()
 
 # Create model
-model = NonCondWaveNet(config['kernel_size'], config['channels'],
+model = GlobCondWaveNet(config['kernel_size'], config['channels'],
                        config['layers'], config['dilatation_bound'])
 
 # Compile model
 callbacks = [
   tf.keras.callbacks.ModelCheckpoint(
-    filepath='./tmp/uncond_wavenet_8000',
+    filepath='./tmp/cond_wavenet',
     save_weights_only=False,
     monitor='sparse_categorical_accuracy',
     mode='max',
     save_best_only=True),
-  UnconditionedSoundCallback(
-    './logs/wavenet_8000',
+  ConditionedSoundCallback(
+    './logs/condwavenet',
     frequency=FS,
-    epoch_frequency=10,
-    samples=FS*4
+    epoch_frequency=1, # TODO: 10
+    samples=FS*4,
+    condition=example_cond
   ),
-  tf.keras.callbacks.TensorBoard(log_dir='./logs/wavenet_8000',
+  tf.keras.callbacks.TensorBoard(log_dir='./logs/condwavenet',
                                  profile_batch=(10,15),
                                  write_graph=False),
 ]
@@ -113,7 +113,7 @@ model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
               metrics=[tf.keras.metrics.SparseCategoricalAccuracy()])
 
 # build the model
-model.call(example_batch[:,:-1])
+model.call((example_batch[:,:-1],example_cond))
 
 # print receptive field
 print('Receptive field')
