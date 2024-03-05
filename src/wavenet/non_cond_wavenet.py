@@ -43,8 +43,7 @@ class NonCondWaveNet(tf.keras.Model):
       bin_boundaries=np.linspace(-1,1,256)[1:-1],
       output_mode='int',)
 
-    # TODO: check compute receptive field
-    self.receptive_field = 0
+    self.receptive_field = 1
     for dil in dilatations:
       self.receptive_field += dil*(kernel_size-1)
 
