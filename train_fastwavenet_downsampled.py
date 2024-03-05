@@ -11,7 +11,7 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 # import tensorflow after setting environment variables
 import tensorflow as tf
 from src.fastwavenet.non_cond_wavenet import NonCondWaveNet
-from src.callbacks import UnconditionedSoundCallback
+from src.callbacks import UnconditionedSoundCallback, inverse_mu_law
 # pylint: enable=wrong-import-position
 
 
@@ -20,11 +20,13 @@ config = {
     'channels': 32,
     'layers': 12,
     'dilatation_bound': 1024,
-    'batch_size': 256,
+    'batch_size': 32,
     'epochs': 1000,
     'lr': 0.0001,
     'recording_length': 8000,
 }
+run_name = 'fastwavenet_8000'
+preview_length = 8000 * 4
 
 # Load data
 dataset = tf.data.Dataset.load('./datasets/vctk8000')
@@ -47,10 +49,6 @@ train_dataset = dataset.filter(lambda x: not filter_fn(x))
 # Preprocess data
 @tf.function(input_signature=[tf.TensorSpec(shape=(None,1), dtype=tf.float32)])
 def convert_and_split(x):
-  # convert 16bit integers (passed as floats) to floats [-1, 1]
-  # the integers are from -2^15 to 2^15-1, therefore we ony need to divide them
-  x = (x / (2.0**(BITS-1)))
-
   # apply the mu-law as in the original paper
   x = tf.sign(x) * (tf.math.log(1.0 + 255.0*tf.abs(x)) / tf.math.log(256.0))
 
@@ -86,21 +84,31 @@ model = NonCondWaveNet(config['kernel_size'], config['channels'],
 # Compile model
 callbacks = [
   tf.keras.callbacks.ModelCheckpoint(
-    filepath='./tmp/uncond_fastwavenet_8000',
+    filepath='./tmp/'+run_name,
     save_weights_only=True,
     monitor='sparse_categorical_accuracy',
     mode='max',
     save_best_only=True),
   UnconditionedSoundCallback(
-    './logs/fastwavenet_8000',
+    './logs/'+run_name,
     frequency=FS,
     epoch_frequency=10,
-    samples=FS*4
+    samples=preview_length
   ),
-  tf.keras.callbacks.TensorBoard(log_dir='./logs/fastwavenet_8000',
+  tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(10,15),
                                  write_graph=False),
 ]
+
+# Save example batch
+print(example_batch.shape)
+with tf.summary.create_file_writer('./logs/'+run_name).as_default():
+  tf.summary.audio('original',
+                   data=inverse_mu_law(example_batch),
+                   step=0,
+                   sample_rate=FS,
+                   encoding='wav',
+                   max_outputs=5)
 
 model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
               loss=tf.keras.losses.SparseCategoricalCrossentropy(),
@@ -120,7 +128,7 @@ model.fit(train_dataset, epochs=config['epochs'],
 
 # Generate samples
 tic = time.time()
-samples = model.generate(config['recording_length'])
-tictoc = tic-time.time()
+samples = model.generate(preview_length,5)
+tictoc = time.time()-tic
 print(f'Generation took {tictoc}s')
-print(f'Speed of generation was {config["recording_length"]/tictoc} samples/s')
+print(f'Speed of generation was {preview_length/tictoc} samples/s')

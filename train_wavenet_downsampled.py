@@ -11,32 +11,22 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 # import tensorflow after setting environment variables
 import tensorflow as tf
 from src.wavenet.non_cond_wavenet import NonCondWaveNet
-from src.callbacks import UnconditionedSoundCallback
+from src.callbacks import UnconditionedSoundCallback, inverse_mu_law
 # pylint: enable=wrong-import-position
-
-# select second GPU
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-  # Restrict TensorFlow to only use the second GPU
-  try:
-    tf.config.experimental.set_visible_devices(gpus[1], 'GPU')
-    logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-    print(len(gpus), 'Physical GPUs,', len(logical_gpus), 'Logical GPU')
-  except RuntimeError as e:
-    # Visible devices must be set before GPUs have been initialized
-    print(e)
 
 
 config = {
-    'kernel_size': 2,
+    'kernel_size': 4,
     'channels': 32,
     'layers': 12,
     'dilatation_bound': 1024,
     'batch_size': 32,
     'epochs': 1000,
     'lr': 0.0001,
-    'recording_length': 4000,
+    'recording_length': 8000,
 }
+run_name = 'wavenet_8000'
+preview_length = 8000 * 4
 
 # Load data
 dataset = tf.data.Dataset.load('./datasets/vctk8000')
@@ -92,21 +82,30 @@ model = NonCondWaveNet(config['kernel_size'], config['channels'],
 # Compile model
 callbacks = [
   tf.keras.callbacks.ModelCheckpoint(
-    filepath='./tmp/uncond_wavenet_8000',
-    save_weights_only=False,
+    filepath='./tmp/'+run_name,
+    save_weights_only=True,
     monitor='sparse_categorical_accuracy',
     mode='max',
     save_best_only=True),
   UnconditionedSoundCallback(
-    './logs/wavenet_8000',
+    './logs/'+run_name,
     frequency=FS,
     epoch_frequency=10,
-    samples=FS*4
+    samples=preview_length
   ),
-  tf.keras.callbacks.TensorBoard(log_dir='./logs/wavenet_8000',
+  tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(10,15),
                                  write_graph=False),
 ]
+
+# Save example batch
+with tf.summary.create_file_writer('./logs/'+run_name).as_default():
+  tf.summary.audio('original',
+                   data=inverse_mu_law(example_batch),
+                   step=0,
+                   sample_rate=FS,
+                   encoding='wav',
+                   max_outputs=5)
 
 model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
               loss=tf.keras.losses.SparseCategoricalCrossentropy(),
@@ -126,7 +125,7 @@ model.fit(train_dataset, epochs=config['epochs'],
 
 # Generate samples
 tic = time.time()
-samples = model.generate(config['recording_length'])
-tictoc = tic-time.time()
+samples = model.generate(preview_length)
+tictoc = time.time()-tic
 print(f'Generation took {tictoc}s')
-print(f'Speed of generation was {config["recording_length"]/tictoc} samples/s')
+print(f'Speed of generation was {preview_length/tictoc} samples/s')

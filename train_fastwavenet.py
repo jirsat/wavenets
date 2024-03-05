@@ -12,7 +12,7 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 import tensorflow as tf
 import tensorflow_datasets as tfds
 from src.fastwavenet.non_cond_wavenet import NonCondWaveNet
-from src.callbacks import UnconditionedSoundCallback
+from src.callbacks import UnconditionedSoundCallback, inverse_mu_law
 # pylint: enable=wrong-import-position
 
 
@@ -22,10 +22,12 @@ config = {
     'layers': 12,
     'dilatation_bound': 1024,
     'batch_size': 32,
-    'epochs': 2,
+    'epochs': 1000,
     'lr': 0.0001,
-    'recording_length': 20000,
+    'recording_length': 48000,
 }
+run_name = 'fastwavenet'
+preview_length = 48000 * 4
 
 # Load data
 dataset = tfds.load('vctk', split='train', shuffle_files=False,
@@ -88,21 +90,30 @@ model = NonCondWaveNet(config['kernel_size'], config['channels'],
 # Compile model
 callbacks = [
   tf.keras.callbacks.ModelCheckpoint(
-    filepath='./tmp/uncond_fastwavenet',
+    filepath='./tmp/'+run_name,
     save_weights_only=True,
     monitor='sparse_categorical_accuracy',
     mode='max',
     save_best_only=True),
   UnconditionedSoundCallback(
-    './logs/fastwavenet',
+    './logs/'+run_name,
     frequency=FS,
-    epoch_frequency=1, # TODO
-    samples=FS#*4 # TODO
+    epoch_frequency=10,
+    samples=preview_length
   ),
-  tf.keras.callbacks.TensorBoard(log_dir='./logs/fastwavenet',
+  tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(10,15),
                                  write_graph=False),
 ]
+
+# Save example batch
+with tf.summary.create_file_writer('./logs/'+run_name).as_default():
+  tf.summary.audio('original',
+                   data=inverse_mu_law(example_batch),
+                   step=0,
+                   sample_rate=FS,
+                   encoding='wav',
+                   max_outputs=5)
 
 model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
               loss=tf.keras.losses.SparseCategoricalCrossentropy(),
@@ -122,7 +133,7 @@ model.fit(train_dataset, epochs=config['epochs'],
 
 # Generate samples
 tic = time.time()
-samples = model.generate(config['recording_length'])
-tictoc = tic-time.time()
+samples = model.generate(preview_length,5)
+tictoc = time.time()-tic
 print(f'Generation took {tictoc}s')
-print(f'Speed of generation was {config["recording_length"]/tictoc} samples/s')
+print(f'Speed of generation was {preview_length/tictoc} samples/s')

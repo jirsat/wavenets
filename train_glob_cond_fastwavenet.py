@@ -12,7 +12,7 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 import tensorflow as tf
 import tensorflow_datasets as tfds
 from src.fastwavenet.glob_cond_wavenet import GlobCondWaveNet
-from src.callbacks import ConditionedSoundCallback
+from src.callbacks import ConditionedSoundCallback, inverse_mu_law
 # pylint: enable=wrong-import-position
 
 
@@ -21,11 +21,13 @@ config = {
     'channels': 32,
     'layers': 12,
     'dilatation_bound': 1024,
-    'batch_size': 128,
+    'batch_size': 32,
     'epochs': 1000,
     'lr': 0.0001,
-    'recording_length': 14000,
+    'recording_length': 48000,
 }
+run_name = 'globcond_fastwavenet'
+preview_length = 48000 * 4
 
 # Load data
 dataset = tfds.load('vctk', split='train', shuffle_files=False,
@@ -91,22 +93,31 @@ model = GlobCondWaveNet(config['kernel_size'], config['channels'],
 # Compile model
 callbacks = [
   tf.keras.callbacks.ModelCheckpoint(
-    filepath='./tmp/cond_wavenet',
-    save_weights_only=False,
+    filepath='./tmp/'+run_name,
+    save_weights_only=True,
     monitor='sparse_categorical_accuracy',
     mode='max',
     save_best_only=True),
   ConditionedSoundCallback(
-    './logs/condwavenet',
+    './logs/'+run_name,
     frequency=FS,
     epoch_frequency=10,
-    samples=FS*4,
+    samples=preview_length,
     condition=example_cond
   ),
-  tf.keras.callbacks.TensorBoard(log_dir='./logs/condwavenet',
+  tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(10,15),
                                  write_graph=False),
 ]
+
+# Save example batch
+with tf.summary.create_file_writer('./logs/'+run_name).as_default():
+  tf.summary.audio('original',
+                   data=inverse_mu_law(example_batch),
+                   step=0,
+                   sample_rate=FS,
+                   encoding='wav',
+                   max_outputs=5)
 
 model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
               loss=tf.keras.losses.SparseCategoricalCrossentropy(),
@@ -126,7 +137,7 @@ model.fit(train_dataset, epochs=config['epochs'],
 
 # Generate samples
 tic = time.time()
-samples = model.generate(config['recording_length'])
-tictoc = tic-time.time()
+samples = model.generate(preview_length,condition=example_cond)
+tictoc = time.time()-tic
 print(f'Generation took {tictoc}s')
-print(f'Speed of generation was {config["recording_length"]/tictoc} samples/s')
+print(f'Speed of generation was {preview_length/tictoc} samples/s')

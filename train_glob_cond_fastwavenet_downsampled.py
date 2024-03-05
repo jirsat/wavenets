@@ -1,4 +1,4 @@
-"""File for training the WaveNet model."""
+"""File for training the FastWaveNet model."""
 
 import os
 import time
@@ -10,9 +10,8 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 # pylint: disable=wrong-import-position
 # import tensorflow after setting environment variables
 import tensorflow as tf
-import tensorflow_datasets as tfds
-from src.wavenet.non_cond_wavenet import NonCondWaveNet
-from src.callbacks import UnconditionedSoundCallback,inverse_mu_law
+from src.fastwavenet.glob_cond_wavenet import GlobCondWaveNet
+from src.callbacks import ConditionedSoundCallback, inverse_mu_law
 # pylint: enable=wrong-import-position
 
 
@@ -22,17 +21,17 @@ config = {
     'layers': 12,
     'dilatation_bound': 1024,
     'batch_size': 32,
-    'epochs': 1000, 
+    'epochs': 1000,
     'lr': 0.0001,
-    'recording_length': 48000,
+    'recording_length': 8000,
 }
-run_name = 'wavenet'
-preview_length = 48000 * 4
+run_name = 'globcond_fastwavenet'
+preview_length = 8000 * 4
+
 
 # Load data
-dataset = tfds.load('vctk', split='train', shuffle_files=False,
-                    data_dir='./datasets/vctk')
-FS = 48000
+dataset = tf.data.Dataset.load('./datasets/vctk8000')
+FS = 8000
 BITS = 16
 
 # take 1 male (59 ~ p286) and 1 female (4 ~ p229) speaker
@@ -51,10 +50,6 @@ train_dataset = dataset.filter(lambda x: not filter_fn(x))
 # Preprocess data
 @tf.function(input_signature=[tf.TensorSpec(shape=(None,1), dtype=tf.float32)])
 def convert_and_split(x):
-  # convert 16bit integers (passed as floats) to floats [-1, 1]
-  # the integers are from -2^15 to 2^15-1, therefore we ony need to divide them
-  x = (x / (2.0**(BITS-1)))
-
   # apply the mu-law as in the original paper
   x = tf.sign(x) * (tf.math.log(1.0 + 255.0*tf.abs(x)) / tf.math.log(256.0))
 
@@ -75,16 +70,19 @@ def preprocess(inputs):
   # cut the audio into chunks of length recording_length
   x = convert_and_split(x)
 
-  # the one-hot encoding is done in the training loopd
-  return x
+  # prepare the condition
+  condition = tf.one_hot(inputs['gender'], 2)
+  condition = tf.broadcast_to(condition, [tf.shape(x)[0],2])
+
+  return (x, condition)
 
 train_dataset = train_dataset.map(preprocess).unbatch()
 train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
 test_dataset = test_dataset.map(preprocess).rebatch(config['batch_size'])
-example_batch = train_dataset.take(1).get_single_element()
+example_batch,example_cond = train_dataset.take(1).get_single_element()
 
 # Create model
-model = NonCondWaveNet(config['kernel_size'], config['channels'],
+model = GlobCondWaveNet(config['kernel_size'], config['channels'],
                        config['layers'], config['dilatation_bound'])
 
 # Compile model
@@ -95,11 +93,12 @@ callbacks = [
     monitor='sparse_categorical_accuracy',
     mode='max',
     save_best_only=True),
-  UnconditionedSoundCallback(
+  ConditionedSoundCallback(
     './logs/'+run_name,
     frequency=FS,
     epoch_frequency=10,
-    samples=preview_length
+    samples=preview_length,
+    condition=example_cond
   ),
   tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(10,15),
@@ -120,7 +119,7 @@ model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
               metrics=[tf.keras.metrics.SparseCategoricalAccuracy()])
 
 # build the model
-model.call(example_batch[:,:-1])
+model.call((example_batch[:,:-1],example_cond))
 
 # print receptive field
 print('Receptive field')
@@ -133,7 +132,7 @@ model.fit(train_dataset, epochs=config['epochs'],
 
 # Generate samples
 tic = time.time()
-samples = model.generate(preview_length)
+samples = model.generate(preview_length,condition=example_cond)
 tictoc = time.time()-tic
 print(f'Generation took {tictoc}s')
 print(f'Speed of generation was {preview_length/tictoc} samples/s')
