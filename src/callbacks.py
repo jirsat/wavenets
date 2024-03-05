@@ -31,6 +31,7 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
     if epoch % self.log_freq== self.log_freq-1:
       batch = self.model.generate(self.samples,
                                   batch_size=5)
+      batch = inverse_mu_law(batch)
       with self.writer.as_default():
         tf.summary.audio('generated',
              data=batch,
@@ -73,6 +74,7 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
     if epoch % self.log_freq== self.log_freq-1:
       batch = self.model.generate(self.samples,
                                   condition=self.condition)
+      batch = inverse_mu_law(batch)
       with self.writer.as_default():
         tf.summary.audio('generated',
              data=batch,
@@ -80,4 +82,11 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
              sample_rate=self.frequency,
              encoding='wav',
              max_outputs=5)
+
+@tf.function(input_signature=[
+  tf.TensorSpec(shape=[None,None,None],dtype=tf.float32)])
+def inverse_mu_law(y: tf.Tensor):
+  """Reverse mu-law transformation"""
+  x = tf.sign(y)*(tf.pow(256.0,tf.abs(y))-1.0)/255.0
+  return x
 
