@@ -46,8 +46,7 @@ class GlobCondWaveNet(tf.keras.Model):
     # queues for fast generation
     self.qs = np.zeros((layers,kernel_size-1)).tolist()
 
-    # TODO: check compute receptive field
-    self.receptive_field = 0
+    self.receptive_field = 1
     for dil in dilatations:
       self.receptive_field += dil*(kernel_size-1)
 
@@ -162,22 +161,37 @@ class GlobCondWaveNet(tf.keras.Model):
     # create queues
     for i,layer in zip(range(len(self.wavenet_layers)),self.wavenet_layers):
       for j in range(layer.kernel_size-1):
+        # first layer is different because it is filled with noise
+        # and first element is dequeued befor queued
         if i == 0:
           size = j + 1
-          self.qs[i][j] = tf.queue.FIFOQueue(
-            size,
-            tf.float32,
-            (batch_size,1,self._build_input_shape[0][2])
-          )
+          if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
+            # if first run create queues
+            self.qs[i][j] = tf.queue.FIFOQueue(
+              size,
+              tf.float32,
+              (batch_size,1,self._build_input_shape[0][2])
+            )
+          else:
+            # if not first run, clear queue
+            enqueued = self.qs[i][j].size().numpy()
+            self.qs[i][j].dequeue_many(enqueued)
+          # initialize queue with noise
           self.qs[i][j].enqueue_many(
             tf.random.normal((size,batch_size,1,self._build_input_shape[0][2])))
         else:
           size = (j+1)*layer.dilation_rate
-          self.qs[i][j] = tf.queue.FIFOQueue(
-            size,
-            tf.float32,
-            (batch_size,1,layer.channels)
-          )
+          if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
+            # if first run create queues
+            self.qs[i][j] = tf.queue.FIFOQueue(
+              size,
+              tf.float32,
+              (batch_size,1,layer.channels)
+            )
+          else:
+            # if not first run, clear queue
+            enqueued = self.qs[i][j].size().numpy()
+            self.qs[i][j].dequeue_many(enqueued)
           self.qs[i][j].enqueue_many(
             tf.zeros((size-1,batch_size,1,layer.channels)))
 
