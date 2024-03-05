@@ -3,6 +3,7 @@
 import tensorflow as tf
 import math
 import numpy as np
+from tqdm import tqdm
 
 from src.wavenet.layers import WaveNetLayer
 
@@ -115,7 +116,7 @@ class NonCondWaveNet(tf.keras.Model):
     x = tf.random.normal(input_shape)
     outputs = []
 
-    for _ in range(length):
+    for _ in tqdm(range(length),'Generating samples'):
       sample = self._generate_one_sample(x)
       x = tf.concat([x[:,1:,:], sample], axis=1)
       outputs.append(sample)
