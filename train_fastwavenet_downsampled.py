@@ -20,10 +20,10 @@ config = {
     'channels': 32,
     'layers': 12,
     'dilatation_bound': 1024,
-    'batch_size': 32,
-    'epochs': 2,
+    'batch_size': 256,
+    'epochs': 1000,
     'lr': 0.0001,
-    'recording_length': 20000,
+    'recording_length': 8000,
 }
 
 # Load data

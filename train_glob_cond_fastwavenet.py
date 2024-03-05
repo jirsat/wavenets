@@ -22,7 +22,7 @@ config = {
     'layers': 12,
     'dilatation_bound': 1024,
     'batch_size': 128,
-    'epochs': 2, # TODO: 1000
+    'epochs': 1000,
     'lr': 0.0001,
     'recording_length': 14000,
 }
@@ -99,7 +99,7 @@ callbacks = [
   ConditionedSoundCallback(
     './logs/condwavenet',
     frequency=FS,
-    epoch_frequency=1, # TODO: 10
+    epoch_frequency=10,
     samples=FS*4,
     condition=example_cond
   ),
