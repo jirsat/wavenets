@@ -10,8 +10,9 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 # pylint: disable=wrong-import-position
 # import tensorflow after setting environment variables
 import tensorflow as tf
-from src.fastwavenet.glob_cond_wavenet import GlobCondWaveNet
-from src.callbacks import ConditionedSoundCallback, inverse_mu_law
+from src.plusfastwavenet.non_cond_wavenet import NonCondWaveNet
+from src.plusfastwavenet.loss import MixtureLoss
+from src.callbacks import UnconditionedSoundCallback
 # pylint: enable=wrong-import-position
 
 
@@ -24,10 +25,10 @@ config = {
     'epochs': 1000,
     'lr': 0.0001,
     'recording_length': 8000,
+    'num_mixtures': 10,
 }
-run_name = 'globcond_fastwavenet_8000'
+run_name = 'plusfastwavenet_8000'
 preview_length = 8000 * 4
-
 
 # Load data
 dataset = tf.data.Dataset.load('./datasets/vctk8000')
@@ -50,9 +51,6 @@ train_dataset = dataset.filter(lambda x: not filter_fn(x))
 # Preprocess data
 @tf.function(input_signature=[tf.TensorSpec(shape=(None,1), dtype=tf.float32)])
 def convert_and_split(x):
-  # apply the mu-law as in the original paper
-  x = tf.sign(x) * (tf.math.log(1.0 + 255.0*tf.abs(x)) / tf.math.log(256.0))
-
   # split into chunks of size config['recording_lenght']
   x = tf.signal.frame(x, axis=0,
                       frame_length=config['recording_length']+1,
@@ -70,35 +68,33 @@ def preprocess(inputs):
   # cut the audio into chunks of length recording_length
   x = convert_and_split(x)
 
-  # prepare the condition
-  condition = tf.one_hot(inputs['gender'], 2)
-  condition = tf.broadcast_to(condition, [tf.shape(x)[0],2])
-
-  return (x, condition)
+  # the one-hot encoding is done in the training loopd
+  return x
 
 train_dataset = train_dataset.map(preprocess).unbatch()
 train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
 test_dataset = test_dataset.map(preprocess).rebatch(config['batch_size'])
-example_batch,example_cond = train_dataset.take(1).get_single_element()
+example_batch = train_dataset.take(1).get_single_element()
 
 # Create model
-model = GlobCondWaveNet(config['kernel_size'], config['channels'],
-                       config['layers'], config['dilatation_bound'])
+model = NonCondWaveNet(config['kernel_size'], config['channels'],
+                       config['layers'], MixtureLoss,
+                       config['dilatation_bound'])
 
 # Compile model
 callbacks = [
   tf.keras.callbacks.ModelCheckpoint(
     filepath='./tmp/'+run_name,
     save_weights_only=True,
-    monitor='sparse_categorical_accuracy',
+    monitor='mean_squared_error',
     mode='max',
     save_best_only=True),
-  ConditionedSoundCallback(
+  UnconditionedSoundCallback(
     './logs/'+run_name,
     frequency=FS,
     epoch_frequency=10,
     samples=preview_length,
-    condition=example_cond
+    apply_mulaw=False
   ),
   tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(10,15),
@@ -106,20 +102,20 @@ callbacks = [
 ]
 
 # Save example batch
+print(example_batch.shape)
 with tf.summary.create_file_writer('./logs/'+run_name).as_default():
   tf.summary.audio('original',
-                   data=inverse_mu_law(example_batch),
+                   data=example_batch,
                    step=0,
                    sample_rate=FS,
                    encoding='wav',
                    max_outputs=5)
 
 model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
-              loss=tf.keras.losses.SparseCategoricalCrossentropy(),
-              metrics=[tf.keras.metrics.SparseCategoricalAccuracy()])
+              metrics=[tf.keras.metrics.MeanSquaredError()])
 
 # build the model
-model.call((example_batch[:,:-1],example_cond))
+model.call(example_batch[:,:-1])
 
 # print receptive field
 print('Receptive field')
@@ -132,7 +128,7 @@ model.fit(train_dataset, epochs=config['epochs'],
 
 # Generate samples
 tic = time.time()
-samples = model.generate(preview_length,condition=example_cond)
+samples = model.generate(preview_length,5)
 tictoc = time.time()-tic
 print(f'Generation took {tictoc}s')
 print(f'Speed of generation was {preview_length/tictoc} samples/s')
