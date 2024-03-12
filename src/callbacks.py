@@ -4,7 +4,8 @@ import tensorflow as tf
 class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
   """Callback for saving generated sound"""
   def __init__(self, log_dir, frequency: int,
-               epoch_frequency: int, samples: int):
+               epoch_frequency: int, samples: int,
+               apply_mulaw: bool = True):
     """Initialize callback
 
     The callback saves generated sound to tensorboard log directory
@@ -18,12 +19,15 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
       epoch_frequency (int): Frequency of saving sound
       samples (int): How many samples to generate.
         i.e. Desired length / sample rate
+      apply_mulaw (bool): Whether to apply mu-law transformation, 
+        default True for backwards compatibility
     """
     super().__init__()
     self.writer = tf.summary.create_file_writer(log_dir)
     self.frequency = frequency
     self.log_freq = epoch_frequency
     self.samples = samples
+    self.apply_mulaw = apply_mulaw
 
   def on_epoch_end(self, epoch, logs=None):
     """Save generated sound on epoch end"""
@@ -31,7 +35,8 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
     if epoch % self.log_freq== self.log_freq-1:
       batch = self.model.generate(self.samples,
                                   batch_size=5)
-      batch = inverse_mu_law(batch)
+      if self.apply_mulaw:
+        batch = inverse_mu_law(batch)
       with self.writer.as_default():
         tf.summary.audio('generated',
              data=batch,
@@ -45,7 +50,7 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
   """Callback for saving generated sound"""
   def __init__(self, log_dir, frequency: int,
                epoch_frequency: int, samples: int,
-               condition: tf.Tensor):
+               condition: tf.Tensor, apply_mulaw: bool = True):
     """Initialize callback
 
     The callback saves generated sound to tensorboard log directory
@@ -60,6 +65,8 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
       samples (int): How many samples to generate.
         i.e. Desired length / sample rate
       condition (tf.Tensor): Condition for the model
+      apply_mulaw (bool): Whether to apply mu-law transformation, 
+        default True for backwards compatibility
     """
     super().__init__()
     self.writer = tf.summary.create_file_writer(log_dir)
@@ -67,6 +74,7 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
     self.log_freq = epoch_frequency
     self.samples = samples
     self.condition = condition
+    self.apply_mulaw = apply_mulaw
 
   def on_epoch_end(self, epoch, logs=None):
     """Save generated sound on epoch end"""
@@ -74,7 +82,8 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
     if epoch % self.log_freq== self.log_freq-1:
       batch = self.model.generate(self.samples,
                                   condition=self.condition)
-      batch = inverse_mu_law(batch)
+      if self.apply_mulaw:
+        batch = inverse_mu_law(batch)
       with self.writer.as_default():
         tf.summary.audio('generated',
              data=batch,
