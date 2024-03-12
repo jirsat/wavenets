@@ -49,10 +49,6 @@ train_dataset = dataset.filter(lambda x: not filter_fn(x))
 # Preprocess data
 @tf.function(input_signature=[tf.TensorSpec(shape=(None,1), dtype=tf.float32)])
 def convert_and_split(x):
-  # convert 16bit integers (passed as floats) to floats [-1, 1]
-  # the integers are from -2^15 to 2^15-1, therefore we ony need to divide them
-  x = (x / (2.0**(BITS-1)))
-
   # apply the mu-law as in the original paper
   x = tf.sign(x) * (tf.math.log(1.0 + 255.0*tf.abs(x)) / tf.math.log(256.0))
 
