@@ -17,13 +17,15 @@ from src.plusfastwavenet.loss import MixtureLoss
 
 
 config = {
-    'kernel_size': 4,
+    'kernel_size': 2,
     'channels': 32,
-    'layers': 12,
-    'dilatation_bound': 1024,
+    'dilatation_channels': 32,
+    'skip_channels': 512,
+    'layers': 50,
+    'dilatation_bound': 512,
     'batch_size': 32,
     'epochs': 1000,
-    'lr': 0.0001,
+    'lr': 0.001,
     'recording_length': 8000,
     'num_mixtures': 10,
 }
@@ -104,6 +106,10 @@ callbacks = [
   tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(15,25),
                                  write_graph=False),
+  tf.keras.callbacks.ReduceLROnPlateau(monitor='mean_squared_error',
+                                      factor=0.2,
+                                      patience=5,
+                                      min_lr=1e-6)
 ]
 
 # Save example batch
