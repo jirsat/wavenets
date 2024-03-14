@@ -7,14 +7,16 @@ class MixtureLoss():
   It computes negative log likelihood of the target given the mixture
   of logistic distributions defined by the weights, means and log_scales.
   """
-  def __init__(self, bits,**kwargs):
+  def __init__(self, bits, name: str = 'MixtureLoss',**kwargs):
     """Initialize MixtureLoss.
 
     Args:
       bits (int): Number of bits in input data
+      name (str): Name of the loss function
     """
     del kwargs
     self.bits = bits
+    self.name = name
 
 
   @tf.function

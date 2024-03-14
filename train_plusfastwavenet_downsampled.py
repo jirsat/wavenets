@@ -12,7 +12,7 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 import tensorflow as tf
 from src.plusfastwavenet.non_cond_wavenet import NonCondWaveNet
 from src.plusfastwavenet.loss import MixtureLoss
-from src.callbacks import UnconditionedSoundCallback
+from src.callbacks import UnconditionedSoundCallback, create_spectogram
 # pylint: enable=wrong-import-position
 
 
@@ -102,13 +102,19 @@ callbacks = [
 ]
 
 # Save example batch
+print('Example batch shape:')
 print(example_batch.shape)
+spectogram = create_spectogram(example_batch, FS)
 with tf.summary.create_file_writer('./logs/'+run_name).as_default():
   tf.summary.audio('original',
                    data=example_batch,
                    step=0,
                    sample_rate=FS,
                    encoding='wav',
+                   max_outputs=5)
+  tf.summary.image('original_spectogram',
+                   data=spectogram,
+                   step=0,
                    max_outputs=5)
 
 model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),

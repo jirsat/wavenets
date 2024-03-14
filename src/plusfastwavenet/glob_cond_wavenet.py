@@ -273,7 +273,9 @@ class GlobCondWaveNet(tf.keras.Model):
     self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
     predictions = self.sample_track(weights, means, log_scales)
     self.compiled_metrics.update_state(target, predictions)
-    return {m.name: m.result() for m in self.metrics}
+    out_dict = {m.name: m.result() for m in self.metrics}
+    out_dict[self.loss_fn.name] = loss
+    return out_dict
 
   def compute_receptive_field(self,sampling_frequency):
     """Compute the receptive field of the WaveNet model.

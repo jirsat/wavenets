@@ -37,13 +37,18 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
                                   batch_size=5)
       if self.apply_mulaw:
         batch = inverse_mu_law(batch)
+      spectogram = create_spectogram(batch,self.frequency)
       with self.writer.as_default():
         tf.summary.audio('generated',
-             data=batch,
-             step=epoch,
-             sample_rate=self.frequency,
-             encoding='wav',
-             max_outputs=5)
+                         data=batch,
+                         step=epoch,
+                         sample_rate=self.frequency,
+                         encoding='wav',
+                         max_outputs=5)
+        tf.summary.image('generated_spectogram',
+                         data=spectogram,
+                         step=epoch,
+                         max_outputs=5)
 
 
 class ConditionedSoundCallback(tf.keras.callbacks.Callback):
@@ -84,13 +89,19 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
                                   condition=self.condition)
       if self.apply_mulaw:
         batch = inverse_mu_law(batch)
+      spectogram = create_spectogram(batch,self.frequency)
       with self.writer.as_default():
         tf.summary.audio('generated',
-             data=batch,
-             step=epoch,
-             sample_rate=self.frequency,
-             encoding='wav',
-             max_outputs=5)
+                         data=batch,
+                         step=epoch,
+                         sample_rate=self.frequency,
+                         encoding='wav',
+                         max_outputs=5)
+        tf.summary.image('generated_spectogram',
+                          data=spectogram,
+                          step=epoch,
+                          max_outputs=5)
+
 
 @tf.function(input_signature=[
   tf.TensorSpec(shape=[None,None,None],dtype=tf.float32)])
@@ -99,3 +110,30 @@ def inverse_mu_law(y: tf.Tensor):
   x = tf.sign(y)*(tf.pow(256.0,tf.abs(y))-1.0)/255.0
   return x
 
+def create_spectogram(data: tf.Tensor, sample_rate: int):
+  """Create spectogram from audio data
+  
+  Args:
+    data (tf.Tensor): Audio data
+    sample_rate (int): Sample rate of the audio data
+  Returns:
+    tf.Tensor: Spectogram of the audio data
+  """
+  del sample_rate
+  data = tf.squeeze(data)
+  spectogram = tf.signal.stft(data,frame_length=256,
+                              frame_step=128)
+  spectogram = tf.abs(spectogram)
+  spectogram = tf.math.log(spectogram+1e-5)
+  spectogram = tf.squeeze(spectogram)
+  spectogram = tf.expand_dims(spectogram,-1)
+
+  # permute to match tensorboard expectations
+  spectogram = tf.transpose(spectogram, perm=[0,2,1,3])
+
+  # scale to 0-1
+  min_val = tf.reduce_min(spectogram)
+  spectogram = spectogram - min_val
+  max_val = tf.reduce_max(spectogram)
+  spectogram = spectogram / max_val
+  return spectogram
