@@ -13,18 +13,21 @@ class GlobCondWaveNet(tf.keras.Model):
   """WaveNet model with global conditioning."""
 
   def __init__(self, kernel_size, channels, layers, loss_fn,
-               dilatation_bound=512, num_mixtures=10, bits=16):
+               dilatation_bound=512, num_mixtures=10, bits=16,
+               skip_channels=None, dilatation_channels=None, **kwargs):
     """Initialize WaveNet model.
 
     Args:
       kernel_size (int): Kernel size for dilated convolutions
-      channels (int): Number of channels in dilated convolutions
+      channels (int): Number of channels in residual connections
       layers (int): Number of layers in WaveNet
       dilatation_bound (int): Maximum dilatation for layers
       num_mixtures (int): Number of mixtures in output distribution
       bits (int): Number of bits in input data
+      dilatation_channels (int): Number of channels in dilatated conv
+      skip_channels (int): Number of channels in skip connections
     """
-    super().__init__()
+    super().__init__(**kwargs)
 
     #compute dilatations for layers
     if math.log(dilatation_bound,kernel_size) % 1 != 0:
@@ -35,10 +38,14 @@ class GlobCondWaveNet(tf.keras.Model):
 
     self.loss_fn = loss_fn(bits)
 
-    self.wavenet_layers = [CondWaveNetLayer(dil, kernel_size, channels)
+    self.wavenet_layers = [CondWaveNetLayer(dil, kernel_size, channels,
+                                            dilatation_channels,
+                                            skip_channels)
                    for dil in dilatations]
+    if skip_channels is None:
+      skip_channels = channels
     self.pre_final = tf.keras.layers.Conv1D(kernel_size=1,
-                                            filters=channels,
+                                            filters=skip_channels,
                                             padding='same')
     self.final = tf.keras.layers.Conv1D(kernel_size=1,
                                         filters=3*num_mixtures,

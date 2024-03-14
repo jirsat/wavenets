@@ -5,19 +5,31 @@ class WaveNetLayer(tf.keras.layers.Layer):
   """WaveNet layer.
 
   This layer strictly follows paper and does not include conditioning.
-  Some other public implementation include convolutions on residual connection,
-  and different 1x1 convolutions for skip and main connections."""
-  def __init__(self, dilation_rate, kernel, channels, **kwargs):
+  Some other public implementation include convolutions on residual connection.
+  """
+  def __init__(self, dilation_rate, kernel, channels,
+               dilatation_channels = None, skip_channels = None,
+               **kwargs):
     """Initialize WaveNet layer.
 
     Args:
       dilation_rate (int): Dilation rate for convolution
       kernel (int): Kernel size for convolution
-      channels (int): Number of channels in convolution
+      channels (int): Number of channels in residual connection
+      dilatation_channels (int): Number of channels in dillatated conv
+                                 for gate and same for filter, if None
+                                  it is set to channels
+      skip_channels (int): Number of channels in skip connection, 
+                           If None, than only one 1x1 convolution is used
+                           and skip connection is the same as main connection
+                           before adding residual connection
+
     """
     super().__init__(**kwargs)
+    if dilatation_channels is None:
+      dilatation_channels = channels
     self.dilated_conv = tf.keras.layers.Conv1D(
-      filters=2*channels,
+      filters=2*dilatation_channels,
       kernel_size=kernel,
       dilation_rate=dilation_rate,
       padding='causal')
@@ -25,6 +37,15 @@ class WaveNetLayer(tf.keras.layers.Layer):
       filters=channels,
       kernel_size=1,
       padding='same')
+
+    if skip_channels is not None:
+      self.conv_skip = tf.keras.layers.Conv1D(
+        filters=skip_channels,
+        kernel_size=1,
+        padding='same')
+    else:
+      self.conv_skip = self.conv1
+
     self.kernel_size = kernel
     self.dilation_rate = dilation_rate
     self.channels = channels
@@ -56,15 +77,14 @@ class WaveNetLayer(tf.keras.layers.Layer):
     x = tf.math.tanh(t) * tf.math.sigmoid(s)
 
     # 1x1 convolution
-    x = self.conv1(x)
+    x_out = self.conv1(x)
 
     # skip connection
-    # some implementations use different 1x1 convolution here
-    skip = x
+    skip = self.conv_skip(x)
 
     # add residual connection
-    x = x + residual
-    return x, skip
+    x_out = x_out + residual
+    return x_out, skip
 
   @tf.function
   def generate(self,inputs):
@@ -76,6 +96,10 @@ class WaveNetLayer(tf.keras.layers.Layer):
     
     Args:
       inputs (tf.Tensor): Input tensor, must already include the dilatation
+                          meaning that the input tensor should already be
+                          composed only of the samples that are needed for
+                          the dilatation. Convolution here is done without
+                          dilatation. 
     Returns:
       tuple: Tuple of two tensors, main and skip connections
     """
@@ -101,16 +125,17 @@ class WaveNetLayer(tf.keras.layers.Layer):
 
     # 1x1 convolution
     kernel,bias = self.conv1.weights
-    x = tf.nn.conv1d(x,kernel,stride=1,padding='VALID')
-    x = tf.nn.bias_add(x,bias)
+    x_out = tf.nn.conv1d(x,kernel,stride=1,padding='VALID')
+    x_out = tf.nn.bias_add(x_out,bias)
 
     # skip connection
-    # some implementations use different 1x1 convolution here
-    skip = x
+    kernel,bias = self.conv_skip.weights
+    skip = tf.nn.conv1d(x,kernel,stride=1,padding='VALID')
+    skip = tf.nn.bias_add(skip,bias)
 
     # add residual connection
-    x = x + residual
-    return x, skip
+    x_out = x_out + residual
+    return x_out, skip
 
 
 class CondWaveNetLayer(tf.keras.layers.Layer):
@@ -119,29 +144,48 @@ class CondWaveNetLayer(tf.keras.layers.Layer):
   This layer strictly follows paper and does include conditioning.
   As the logic in layer for global and local conditioning is the same, this is
   something that should be managed in model; layer is agnostic in this regard.
-  Some other public implementation include convolutions on residual connection,
-  and different 1x1 convolutions for skip and main connections."""
-  def __init__(self, dilation_rate, kernel, channels, **kwargs):
+  Some other public implementation include convolutions on residual connection.
+  """
+  def __init__(self, dilation_rate, kernel, channels,
+               dilatation_channels = None, skip_channels = None,
+               **kwargs):
     """Initialize conditional WaveNet layer.
 
     Args:
       dilation_rate (int): Dilation rate for convolution
       kernel (int): Kernel size for convolution
-      channels (int): Number of channels in convolution
+      channels (int): Number of channels in residual convolution
+      dilatation_channels (int): Number of channels in dillatated conv
+                                 for gate and same for filter, if None
+                                  it is set to channels
+      skip_channels (int): Number of channels in skip connection, 
+                           If None, than only one 1x1 convolution is used
+                           and skip connection is the same as main connection
+                           before adding residual connection
     """
     super().__init__(**kwargs)
+    if dilatation_channels is None:
+      dilatation_channels = channels
     self.dilated_conv = tf.keras.layers.Conv1D(
-      filters=2*channels,
+      filters=2*dilatation_channels,
       kernel_size=kernel,
-      dilation_rate=2*dilation_rate,
+      dilation_rate=dilation_rate,
       padding='causal')
     self.conv_cond = tf.keras.layers.Conv1D(
-      filters=2*channels,
+      filters=2*dilatation_channels,
       kernel_size=1)
     self.conv1 = tf.keras.layers.Conv1D(
       filters=channels,
       kernel_size=1,
       padding='same')
+    if skip_channels is not None:
+      self.conv_skip = tf.keras.layers.Conv1D(
+        filters=skip_channels,
+        kernel_size=1,
+        padding='same')
+    else:
+      self.conv_skip = self.conv1
+
     self.kernel_size = kernel
     self.dilation_rate = dilation_rate
     self.channels = channels
@@ -177,15 +221,14 @@ class CondWaveNetLayer(tf.keras.layers.Layer):
     x = tf.math.tanh(t) * tf.math.sigmoid(s)
 
     # 1x1 convolution
-    x = self.conv1(x)
+    x_out = self.conv1(x)
 
     # skip connection
-    # some implementations use different 1x1 convolution here
-    skip = x
+    skip = self.conv_skip(x)
 
     # add residual connection
-    x = x + residual
-    return x, skip
+    x_out = x_out + residual
+    return x_out, skip
 
   @tf.function
   def generate(self,inputs):
@@ -229,13 +272,14 @@ class CondWaveNetLayer(tf.keras.layers.Layer):
 
     # 1x1 convolution
     kernel,bias = self.conv1.weights
-    x = tf.nn.conv1d(x,kernel,stride=1,padding='VALID')
-    x = tf.nn.bias_add(x,bias)
+    x_out = tf.nn.conv1d(x,kernel,stride=1,padding='VALID')
+    x_out = tf.nn.bias_add(x_out,bias)
 
     # skip connection
-    # some implementations use different 1x1 convolution here
-    skip = x
+    kernel,bias = self.conv_skip.weights
+    skip = tf.nn.conv1d(x,kernel,stride=1,padding='VALID')
+    skip = tf.nn.bias_add(skip,bias)
 
     # add residual connection
-    x = x + residual
-    return x, skip
+    x_out = x_out + residual
+    return x_out, skip

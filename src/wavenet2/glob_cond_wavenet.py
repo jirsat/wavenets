@@ -5,25 +5,22 @@ import math
 import numpy as np
 from tqdm import tqdm
 
-from src.fastwavenet.layers import CondWaveNetLayer
+from src.wavenet.layers import CondWaveNetLayer
 
 
 class GlobCondWaveNet(tf.keras.Model):
   """WaveNet model with global conditioning."""
 
-  def __init__(self, kernel_size, channels, layers, dilatation_bound=512,
-               dilatation_channels=None, skip_channels=None, **kwargs):
+  def __init__(self, kernel_size, channels, layers, dilatation_bound=512):
     """Initialize WaveNet model.
 
     Args:
       kernel_size (int): Kernel size for dilated convolutions
-      channels (int): Number of channels in residual connections
+      channels (int): Number of channels in dilated convolutions
       layers (int): Number of layers in WaveNet
       dilatation_bound (int): Maximum dilatation for layers
-      dilatation_channels (int): Number of channels in dilatated conv
-      skip_channels (int): Number of channels in skip connections
     """
-    super().__init__(**kwargs)
+    super().__init__()
 
     #compute dilatations for layers
     if math.log(dilatation_bound,kernel_size) % 1 != 0:
@@ -32,14 +29,10 @@ class GlobCondWaveNet(tf.keras.Model):
     dilatations = [int(kernel_size**(i % max_power))
                    for i in range(layers)]
 
-    self.wavenet_layers = [CondWaveNetLayer(dil, kernel_size, channels,
-                                            dilatation_channels,
-                                            skip_channels)
+    self.wavenet_layers = [CondWaveNetLayer(dil, kernel_size, channels)
                    for dil in dilatations]
-    if skip_channels is None:
-      skip_channels = channels
     self.pre_final = tf.keras.layers.Conv1D(kernel_size=1,
-                                            filters=skip_channels,
+                                            filters=channels,
                                             padding='same')
     self.final = tf.keras.layers.Conv1D(kernel_size=1,
                                         filters=256,
@@ -50,14 +43,10 @@ class GlobCondWaveNet(tf.keras.Model):
       bin_boundaries=np.linspace(-1,1,256)[1:-1],
       output_mode='int',)
 
-    # queues for fast generation
-    self.qs = np.zeros((layers,kernel_size-1)).tolist()
-
     self.receptive_field = 1
     for dil in dilatations:
       self.receptive_field += dil*(kernel_size-1)
 
-  @tf.function
   def call(self, inputs, training=False):
     """Call the model on input.
     
@@ -87,55 +76,24 @@ class GlobCondWaveNet(tf.keras.Model):
     x = self.softmax(x)
     return x
 
-  @tf.function
-  def _generation(self,x,cond):
+  @tf.function(reduce_retracing=True)
+  def _generate_one_sample(self,x, training=False):
     """Generate one sample from model.
 
-    This function is based on fast-wavenet idea and implements
-    generation with queues.
-
+    This method is used for generating samples during inference and should
+    not be called directly. This function is decorated with tf.function
+    decorator to speed up the computation.
+    
     Args:
-      x (tf.Tensor): Input tensor of shape (batch,1,channels)
-      cond (tf.Tensor): Condition tensor of shape (batch,encoding_size)
-
+      x (tuple): Input tensor and condition tensor
+      training (bool): Whether the model is training
     Returns:
       tf.Tensor: Output tensor"""
-    # prepare condition to correct format
-    cond = tf.expand_dims(cond, axis=1)
-
-    aggregate = 0
-    for i,layer in enumerate(self.wavenet_layers):
-      stack = [x]
-      # get inputs from queues
-      for q in self.qs[i]:
-        stack.append(q.dequeue())
-
-      stack.reverse()
-      inputs = tf.concat(stack,axis=1)
-      x, skip = layer.generate((inputs,cond))
-
-      # add outputs to queues
-      if i < len(self.wavenet_layers)-1:
-        for q in self.qs[i+1]:
-          q.enqueue(x)
-
-      aggregate = skip + aggregate
-
-    x = tf.nn.relu(aggregate)
-    kernel,bias = self.pre_final.weights
-    x = tf.nn.conv1d(x,kernel,stride=1,padding='VALID')
-    x = tf.nn.bias_add(x,bias)
-    x = tf.nn.relu(x)
-    kernel,bias = self.final.weights
-    x = tf.nn.conv1d(x,kernel,stride=1,padding='VALID')
-    x = tf.nn.bias_add(x,bias)
-    probs = tf.nn.softmax(x,-1)
-
-    sample = tf.random.categorical(
-      tf.math.log(probs[:,-1,:]), 1)
+    prediction = self(x, training=training)
+    prediction = tf.random.categorical(
+      tf.math.log(prediction[:,-1,:]), 1)
     sample = tf.expand_dims(tf.gather(
-      np.linspace(-1,1,256,dtype=np.float32),sample),axis=-1)
-
+      np.linspace(-1,1,256,dtype=np.float32),prediction),axis=-1)
     return sample
 
   def generate(self, length, condition=None, training=False):
@@ -159,54 +117,14 @@ class GlobCondWaveNet(tf.keras.Model):
     if training:
       raise ValueError('This method should not be called during training.')
     batch_size = condition.shape[0] if condition is not None else 1
-    if condition is None:
-      condition = tf.zeros((1,1,2))
-    input_shape= (batch_size,1,self._build_input_shape[0][2])
-    sample = tf.random.normal(shape=input_shape)
+    input_shape= (batch_size,*self._build_input_shape[0][1:])
+    x = tf.random.normal(shape=input_shape)
     outputs = []
 
-    # create queues
-    for i,layer in zip(range(len(self.wavenet_layers)),self.wavenet_layers):
-      for j in range(layer.kernel_size-1):
-        # first layer is different because it is filled with noise
-        # and first element is dequeued befor queued
-        if i == 0:
-          size = j + 1
-          if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
-            # if first run create queues
-            self.qs[i][j] = tf.queue.FIFOQueue(
-              size,
-              tf.float32,
-              (batch_size,1,self._build_input_shape[0][2])
-            )
-          else:
-            # if not first run, clear queue
-            enqueued = self.qs[i][j].size().numpy()
-            self.qs[i][j].dequeue_many(enqueued)
-          # initialize queue with noise
-          self.qs[i][j].enqueue_many(
-            tf.random.normal((size,batch_size,1,self._build_input_shape[0][2])))
-        else:
-          size = (j+1)*layer.dilation_rate
-          if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
-            # if first run create queues
-            self.qs[i][j] = tf.queue.FIFOQueue(
-              size,
-              tf.float32,
-              (batch_size,1,layer.channels)
-            )
-          else:
-            # if not first run, clear queue
-            enqueued = self.qs[i][j].size().numpy()
-            self.qs[i][j].dequeue_many(enqueued)
-          self.qs[i][j].enqueue_many(
-            tf.zeros((size-1,batch_size,1,layer.channels)))
-
     for _ in tqdm(range(length),'Generating samples'):
-      sample = self._generation(sample,condition)
+      sample = self._generate_one_sample((x,condition))
+      x = tf.concat([x[:,1:,:], sample], axis=1)
       outputs.append(sample)
-      for q in self.qs[0]:
-        q.enqueue(sample)
 
     return tf.concat(outputs, axis=1)
 
