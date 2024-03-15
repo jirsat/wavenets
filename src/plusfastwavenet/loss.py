@@ -7,7 +7,7 @@ class MixtureLoss():
   It computes negative log likelihood of the target given the mixture
   of logistic distributions defined by the weights, means and log_scales.
   """
-  def __init__(self, bits, name: str = 'MixtureLoss',**kwargs):
+  def __init__(self, bits, name: str = 'MixtureLoss', **kwargs):
     """Initialize MixtureLoss.
 
     Args:
@@ -36,12 +36,12 @@ class MixtureLoss():
     target = tf.repeat(y_true, num_mixtures, axis=-1)
     weights = tf.nn.softmax(weights, axis=-1)
     halfbit = 0.5*1/(2**self.bits) # as ints are converted to floats
+    log_scales = tf.maximum(log_scales, -7) # to avoid NaNs - as in PixelCNN++
     likelihood = tf.reduce_sum(
-      weights*(tf.nn.sigmoid((target-means+halfbit)*tf.exp(-log_scales))
-                - tf.nn.sigmoid((target-means-halfbit)*tf.exp(-log_scales))),
+      weights*(tf.nn.sigmoid((target-means+halfbit)*tf.exp(-1.0*log_scales))
+               - tf.nn.sigmoid((target-means-halfbit)*tf.exp(-1.0*log_scales))),
       axis=-1)
     loglikes = tf.math.log(likelihood)
-
     return tf.reduce_mean(-1.0 * loglikes)
 
   def __call__(self,*args):
