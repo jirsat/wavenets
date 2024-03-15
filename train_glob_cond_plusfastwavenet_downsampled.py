@@ -12,7 +12,7 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 import tensorflow as tf
 from src.plusfastwavenet.glob_cond_wavenet import GlobCondWaveNet
 from src.callbacks import ConditionedSoundCallback, create_spectogram
-from src.plusfastwavenet.loss import MixtureLoss
+from src.plusfastwavenet.loss import MixtureNormalLoss
 # pylint: enable=wrong-import-position
 
 
@@ -23,7 +23,7 @@ config = {
     'skip_channels': 256,
     'layers': 50,
     'dilatation_bound': 512,
-    'batch_size': 24,
+    'batch_size': 16,
     'epochs': 500,
     'lr': 0.001,
     'recording_length': 8000,
@@ -87,7 +87,7 @@ example_batch,example_cond = train_dataset.take(1).get_single_element()
 model = GlobCondWaveNet(kernel_size=config['kernel_size'],
                         channels=config['channels'],
                         layers=config['layers'],
-                        loss_fn=MixtureLoss,
+                        loss_fn=MixtureNormalLoss,
                         dilatation_bound=config['dilatation_bound'],
                         skip_channels=config['skip_channels'],
                         dilatation_channels=config['dilatation_channels'],

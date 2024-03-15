@@ -128,8 +128,9 @@ class GlobCondWaveNet(tf.keras.Model):
     mu = tf.reduce_sum(selected*means,axis=-1)
     scale = tf.reduce_sum(selected*tf.exp(log_scales),axis=-1)
 
-    z = tfp.distributions.Logistic(loc=tf.zeros_like(mu),
-                                   scale=tf.ones_like(scale)).sample()
+    #z = tfp.distributions.Logistic(loc=tf.zeros_like(mu),
+    #                               scale=tf.ones_like(scale)).sample()
+    z = tf.random.normal(shape=tf.shape(mu))
     samples = mu + z *scale
 
     samples = tf.clip_by_value(samples,-1,1)
