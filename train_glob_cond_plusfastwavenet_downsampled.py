@@ -20,14 +20,15 @@ config = {
     'kernel_size': 2,
     'channels': 32,
     'dilatation_channels': 32,
-    'skip_channels': 512,
+    'skip_channels': 256,
     'layers': 50,
     'dilatation_bound': 512,
-    'batch_size': 32,
-    'epochs': 1000,
+    'batch_size': 24,
+    'epochs': 500,
     'lr': 0.001,
     'recording_length': 8000,
     'num_mixtures': 10,
+    'l2_reg': 0.001,
 }
 run_name = 'globcond_plusfastwavenet_8000'
 preview_length = 8000 * 4
@@ -83,9 +84,15 @@ test_dataset = test_dataset.map(preprocess).rebatch(config['batch_size'])
 example_batch,example_cond = train_dataset.take(1).get_single_element()
 
 # Create model
-model = GlobCondWaveNet(config['kernel_size'], config['channels'],
-                       config['layers'], MixtureLoss,
-                       config['dilatation_bound'])
+model = GlobCondWaveNet(kernel_size=config['kernel_size'],
+                        channels=config['channels'],
+                        layers=config['layers'],
+                        loss_fn=MixtureLoss,
+                        dilatation_bound=config['dilatation_bound'],
+                        skip_channels=config['skip_channels'],
+                        dilatation_channels=config['dilatation_channels'],
+                        num_mixtures=config['num_mixtures'],
+                        l2_reg_factor=config['l2_reg'])
 
 # Compile model
 callbacks = [
@@ -98,10 +105,10 @@ callbacks = [
   ConditionedSoundCallback(
     './logs/'+run_name,
     frequency=FS,
-    epoch_frequency=10,
+    epoch_frequency=5,
     samples=preview_length,
     condition=example_cond,
-    apply_mulaw=False
+    apply_mulaw=False,
   ),
   tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(15,25),

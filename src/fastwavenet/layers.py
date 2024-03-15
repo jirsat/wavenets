@@ -9,7 +9,7 @@ class WaveNetLayer(tf.keras.layers.Layer):
   """
   def __init__(self, dilation_rate, kernel, channels,
                dilatation_channels = None, skip_channels = None,
-               **kwargs):
+               l2_reg_factor = None, **kwargs):
     """Initialize WaveNet layer.
 
     Args:
@@ -23,26 +23,40 @@ class WaveNetLayer(tf.keras.layers.Layer):
                            If None, than only one 1x1 convolution is used
                            and skip connection is the same as main connection
                            before adding residual connection
+      l2_reg_factor (float): L2 regularization factor for weights, default is 
+                             None, meaning no regularization, same as 0
 
     """
     super().__init__(**kwargs)
+    if l2_reg_factor is not None and l2_reg_factor > 0:
+      r1 = tf.keras.regularizers.L2(l2_reg_factor)
+      r2 = tf.keras.regularizers.L2(l2_reg_factor)
+      r3 = tf.keras.regularizers.L2(l2_reg_factor)
+    else:
+      r1 = None
+      r2 = None
+      r3 = None
+
     if dilatation_channels is None:
       dilatation_channels = channels
     self.dilated_conv = tf.keras.layers.Conv1D(
       filters=2*dilatation_channels,
       kernel_size=kernel,
       dilation_rate=dilation_rate,
-      padding='causal')
+      padding='causal',
+      kernel_regularizer=r1)
     self.conv1 = tf.keras.layers.Conv1D(
       filters=channels,
       kernel_size=1,
-      padding='same')
+      padding='same',
+      kernel_regularizer=r2)
 
     if skip_channels is not None:
       self.conv_skip = tf.keras.layers.Conv1D(
         filters=skip_channels,
         kernel_size=1,
-        padding='same')
+        padding='same',
+        kernel_regularizer=r3)
     else:
       self.conv_skip = self.conv1
 
@@ -148,7 +162,7 @@ class CondWaveNetLayer(tf.keras.layers.Layer):
   """
   def __init__(self, dilation_rate, kernel, channels,
                dilatation_channels = None, skip_channels = None,
-               **kwargs):
+               l2_reg_factor = None, **kwargs):
     """Initialize conditional WaveNet layer.
 
     Args:
@@ -162,27 +176,44 @@ class CondWaveNetLayer(tf.keras.layers.Layer):
                            If None, than only one 1x1 convolution is used
                            and skip connection is the same as main connection
                            before adding residual connection
+      l2_reg_factor (float): L2 regularization factor for weights, default is 
+                             None, meaning no regularization, same as 0
     """
     super().__init__(**kwargs)
     if dilatation_channels is None:
       dilatation_channels = channels
+    if l2_reg_factor is not None and l2_reg_factor > 0:
+      r1 = tf.keras.regularizers.L2(l2_reg_factor)
+      r2 = tf.keras.regularizers.L2(l2_reg_factor)
+      r3 = tf.keras.regularizers.L2(l2_reg_factor)
+      r4 = tf.keras.regularizers.L2(l2_reg_factor)
+    else:
+      r1 = None
+      r2 = None
+      r3 = None
+      r4 = None
+
     self.dilated_conv = tf.keras.layers.Conv1D(
       filters=2*dilatation_channels,
       kernel_size=kernel,
       dilation_rate=dilation_rate,
-      padding='causal')
+      padding='causal',
+      kernel_regularizer=r1)
     self.conv_cond = tf.keras.layers.Conv1D(
       filters=2*dilatation_channels,
-      kernel_size=1)
+      kernel_size=1,
+      kernel_regularizer=r2)
     self.conv1 = tf.keras.layers.Conv1D(
       filters=channels,
       kernel_size=1,
-      padding='same')
+      padding='same',
+      kernel_regularizer=r3)
     if skip_channels is not None:
       self.conv_skip = tf.keras.layers.Conv1D(
         filters=skip_channels,
         kernel_size=1,
-        padding='same')
+        padding='same',
+        kernel_regularizer=r4)
     else:
       self.conv_skip = self.conv1
 

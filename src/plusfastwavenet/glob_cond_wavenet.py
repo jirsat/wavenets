@@ -14,7 +14,8 @@ class GlobCondWaveNet(tf.keras.Model):
 
   def __init__(self, kernel_size, channels, layers, loss_fn,
                dilatation_bound=512, num_mixtures=10, bits=16,
-               skip_channels=None, dilatation_channels=None, **kwargs):
+               skip_channels=None, dilatation_channels=None,
+               l2_reg_factor = None, **kwargs):
     """Initialize WaveNet model.
 
     Args:
@@ -24,8 +25,10 @@ class GlobCondWaveNet(tf.keras.Model):
       dilatation_bound (int): Maximum dilatation for layers
       num_mixtures (int): Number of mixtures in output distribution
       bits (int): Number of bits in input data
-      dilatation_channels (int): Number of channels in dilatated conv
       skip_channels (int): Number of channels in skip connections
+      dilatation_channels (int): Number of channels in dilatated conv
+      l2_reg_factor (float): L2 regularization factor, if None or 0 no 
+                             regularization is used
     """
     super().__init__(**kwargs)
 
@@ -40,16 +43,29 @@ class GlobCondWaveNet(tf.keras.Model):
 
     self.wavenet_layers = [CondWaveNetLayer(dil, kernel_size, channels,
                                             dilatation_channels,
-                                            skip_channels)
+                                            skip_channels,
+                                            l2_reg_factor=l2_reg_factor)
                    for dil in dilatations]
     if skip_channels is None:
       skip_channels = channels
+
+    if l2_reg_factor is not None and l2_reg_factor > 0:
+      r1 = tf.keras.regularizers.L2(l2_reg_factor)
+      r2 = tf.keras.regularizers.L2(l2_reg_factor)
+      self.regularization = True
+    else:
+      r1 = None
+      r2 = None
+      self.regularization = False
+
     self.pre_final = tf.keras.layers.Conv1D(kernel_size=1,
                                             filters=skip_channels,
-                                            padding='same')
+                                            padding='same',
+                                            kernel_regularizer=r1)
     self.final = tf.keras.layers.Conv1D(kernel_size=1,
                                         filters=3*num_mixtures,
-                                        padding='same')
+                                        padding='same',
+                                        kernel_regularizer=r2)
 
     # queues for fast generation
     self.qs = np.zeros((layers,kernel_size-1)).tolist()
@@ -276,12 +292,19 @@ class GlobCondWaveNet(tf.keras.Model):
     with tf.GradientTape() as tape:
       weights, means, log_scales = self((inputs,condition), training=True)
       loss = self.loss_fn(target, weights, means, log_scales)
-    gradients = tape.gradient(loss, self.trainable_variables)
+      if self.regularization:
+        regularization = tf.reduce_sum(self.losses)
+        loss_final = loss + regularization
+      else:
+        loss_final = loss
+    gradients = tape.gradient(loss_final, self.trainable_variables)
     self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
     predictions = self.sample_track(weights, means, log_scales)
     self.compiled_metrics.update_state(target, predictions)
     out_dict = {m.name: m.result() for m in self.metrics}
     out_dict[self.loss_fn.name] = loss
+    if self.regularization:
+      out_dict['regularization_loss'] = regularization
     return out_dict
 
   def compute_receptive_field(self,sampling_frequency):
