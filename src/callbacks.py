@@ -55,7 +55,8 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
   """Callback for saving generated sound"""
   def __init__(self, log_dir, frequency: int,
                epoch_frequency: int, samples: int,
-               condition: tf.Tensor, apply_mulaw: bool = True):
+               condition: tf.Tensor, apply_mulaw: bool = True,
+               initial_sample = None):
     """Initialize callback
 
     The callback saves generated sound to tensorboard log directory
@@ -72,6 +73,9 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
       condition (tf.Tensor): Condition for the model
       apply_mulaw (bool): Whether to apply mu-law transformation, 
         default True for backwards compatibility
+      initial_sample (tf.Tensor): Initial sample for the model
+        to generate novel sample from. Defaults to None (only random noise),
+        expected input is (waveform,condition)
     """
     super().__init__()
     self.writer = tf.summary.create_file_writer(log_dir)
@@ -80,6 +84,7 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
     self.samples = samples
     self.condition = condition
     self.apply_mulaw = apply_mulaw
+    self.initial_sample = initial_sample
 
   def on_epoch_end(self, epoch, logs=None):
     """Save generated sound on epoch end"""
@@ -89,6 +94,11 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
                                   condition=self.condition)
       if self.apply_mulaw:
         batch = inverse_mu_law(batch)
+      if self.initial_sample is not None:
+        wave, cond = self.initial_sample
+        initial = self.model.generate_from_sample(self.samples, wave, cond)
+        if self.apply_mulaw:
+          initial = inverse_mu_law(initial)
       spectogram = create_spectogram(batch,self.frequency)
       with self.writer.as_default():
         tf.summary.audio('generated',
@@ -101,6 +111,13 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
                           data=spectogram,
                           step=epoch,
                           max_outputs=5)
+        if self.initial_sample is not None:
+          tf.summary.audio('with_initial',
+                           data=initial,
+                           step=epoch,
+                           sample_rate=self.frequency,
+                           encoding='wav',
+                           max_outputs=5)
 
 
 @tf.function(input_signature=[

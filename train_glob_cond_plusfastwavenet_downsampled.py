@@ -34,6 +34,7 @@ run_name = 'globcond_plusfastwavenet_8000'
 preview_length = 8000 * 4
 
 
+
 # Load data
 dataset = tf.data.Dataset.load('./datasets/vctk8000')
 FS = 8000
@@ -44,13 +45,13 @@ BITS = 16
 test_speakers = [59, 4]
 
 @tf.function
-def filter_fn(x):
+def select_test(x):
   speaker = x['speaker']
   outputs = tf.reduce_any(speaker == test_speakers)
   return outputs
 
-test_dataset = dataset.filter(filter_fn)
-train_dataset = dataset.filter(lambda x: not filter_fn(x))
+test_dataset = dataset.filter(select_test)
+train_dataset = dataset.filter(lambda x: not select_test(x))
 
 # Preprocess data
 @tf.function(input_signature=[tf.TensorSpec(shape=(None,1), dtype=tf.float32)])
@@ -82,6 +83,15 @@ train_dataset = train_dataset.map(preprocess).unbatch()
 train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
 test_dataset = test_dataset.map(preprocess).rebatch(config['batch_size'])
 example_batch,example_cond = train_dataset.take(1).get_single_element()
+
+# filter the training dataset to be sure, that the length of the
+# audio is as expected
+@tf.function(
+    input_signature=[tf.TensorSpec(shape=(None,None,1), dtype=tf.float32),
+                    tf.TensorSpec(shape=(None,2), dtype=tf.float32)])
+def filter_fn(x, _):
+  return tf.shape(x)[1] == config['recording_length']+1
+train_dataset = train_dataset.filter(filter_fn)
 
 # Create model
 model = GlobCondWaveNet(kernel_size=config['kernel_size'],
@@ -135,7 +145,8 @@ with tf.summary.create_file_writer('./logs/'+run_name).as_default():
                    step=0,
                    max_outputs=5)
 
-model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr']),
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr'],
+                                                 clipnorm=1.0),
               metrics=[tf.keras.metrics.MeanSquaredError()])
 
 # build the model
