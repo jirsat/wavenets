@@ -225,9 +225,9 @@ class GlobCondWaveNet(tf.keras.Model):
       tf.Tensor: Output tensor"""
     if training:
       raise ValueError('This method should not be called during training.')
-    batch_size = condition.shape[0] if condition is not None else 1
+    batch_size = condition.shape[0] if condition is not None else 2
     if condition is None:
-      condition = tf.zeros((1,1,2))
+      condition = tf.zeros((batch_size,2))
     input_shape= (batch_size,1,1)
     sample = tf.random.normal(shape=input_shape)
     outputs = []
