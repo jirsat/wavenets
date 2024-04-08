@@ -228,7 +228,7 @@ class GlobCondWaveNet(tf.keras.Model):
     batch_size = condition.shape[0] if condition is not None else 1
     if condition is None:
       condition = tf.zeros((1,1,2))
-    input_shape= (batch_size,1,self._build_input_shape[0][2])
+    input_shape= (batch_size,1,1)
     sample = tf.random.normal(shape=input_shape)
     outputs = []
 
@@ -244,7 +244,7 @@ class GlobCondWaveNet(tf.keras.Model):
             self.qs[i][j] = tf.queue.FIFOQueue(
               size,
               tf.float32,
-              (batch_size,1,self._build_input_shape[0][2])
+              (batch_size,1,1)
             )
           else:
             # if not first run, clear queue
@@ -252,7 +252,7 @@ class GlobCondWaveNet(tf.keras.Model):
             self.qs[i][j].dequeue_many(enqueued)
           # initialize queue with noise
           self.qs[i][j].enqueue_many(
-            tf.random.normal((size,batch_size,1,self._build_input_shape[0][2])))
+            tf.random.normal((size,batch_size,1,1)))
         else:
           size = (j+1)*layer.dilation_rate
           if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
@@ -296,14 +296,14 @@ class GlobCondWaveNet(tf.keras.Model):
             self.qs[i][j] = tf.queue.FIFOQueue(
               size,
               tf.float32,
-              (batch_size,1,self._build_input_shape[0][2])
+              (batch_size,1,1)
             )
           else:
             # if not first run, clear queue
             enqueued = self.qs[i][j].size().numpy()
             self.qs[i][j].dequeue_many(enqueued)
           # initialize queue with sample
-          # desired shape: (size,batch_size,1,self._build_input_shape[0][2])
+          # desired shape: (size,batch_size,1,1)
           init = sample[:,-size-1:-2,:]
           init = tf.transpose(init, perm=[1,0,2])
           init = tf.expand_dims(init, axis=2)
