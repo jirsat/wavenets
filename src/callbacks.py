@@ -118,6 +118,11 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
                            sample_rate=self.frequency,
                            encoding='wav',
                            max_outputs=5)
+          spectogram = create_spectogram(batch,self.frequency)
+          tf.summary.image('generated_spectogram_with_initial',
+                          data=spectogram,
+                          step=epoch,
+                          max_outputs=5)
 
 
 @tf.function(input_signature=[
