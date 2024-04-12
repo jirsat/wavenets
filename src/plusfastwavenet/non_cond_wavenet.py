@@ -4,7 +4,6 @@ import tensorflow as tf
 import math
 import numpy as np
 from tqdm import tqdm
-import tensorflow_probability as tfp
 
 from src.fastwavenet.layers import WaveNetLayer
 
@@ -122,16 +121,20 @@ class NonCondWaveNet(tf.keras.Model):
     Returns:
       tf.Tensor: Sampled tensor"""
     weights = tf.math.log(weights+1e-10)
+
     selected = tf.random.categorical(weights,1)
+    selected = tf.squeeze(selected,axis=-1)
+
     selected = tf.one_hot(selected,depth=self.num_mixtures)
     mu = tf.reduce_sum(selected*means,axis=-1)
     scale = tf.reduce_sum(selected*tf.exp(log_scales),axis=-1)
 
-    z = tfp.distributions.Logistic(loc=tf.zeros_like(mu),
-                                   scale=tf.ones_like(scale)).sample()
+    z = tf.random.normal(shape=tf.shape(mu),seed=42)
     samples = mu + z *scale
 
     samples = tf.clip_by_value(samples,-1,1)
+    samples = tf.expand_dims(samples,axis=-1)
+
     return samples
 
   @tf.function(
@@ -168,9 +171,9 @@ class NonCondWaveNet(tf.keras.Model):
       x (tf.Tensor): Input tensor of shape (batch,1,channels)
     Returns:
       tf.Tensor: Output tensor"""
-    i = 0
-    aggregate = None
-    for layer in self.wavenet_layers:
+
+    aggregate = 0
+    for i,layer in enumerate(self.wavenet_layers):
       stack = [x]
       # get inputs from queues
       for q in self.qs[i]:
@@ -185,11 +188,7 @@ class NonCondWaveNet(tf.keras.Model):
         for q in self.qs[i+1]:
           q.enqueue(x)
 
-      if aggregate is None:
-        aggregate = skip
-      else:
-        aggregate = aggregate + skip
-      i = i + 1
+      aggregate = skip + aggregate
 
     x = tf.nn.relu(aggregate)
     kernel,bias = self.pre_final.weights
@@ -206,7 +205,7 @@ class NonCondWaveNet(tf.keras.Model):
     return sample
 
 
-  def generate(self, length, batch_size=1, training=False):
+  def generate(self, length, batch_size=2, training=False):
     """Generate samples from model.
     
     This method is used for generating samples during inference and
@@ -224,52 +223,96 @@ class NonCondWaveNet(tf.keras.Model):
     if training:
       raise ValueError('This method should not be called during training.')
 
-    input_shape= (batch_size,1,self._build_input_shape[2])
+    input_shape= (batch_size,1,1)
     sample = tf.random.normal(input_shape)
     outputs = []
 
     # create queues
+    channels = 1
     for i,layer in zip(range(len(self.wavenet_layers)),self.wavenet_layers):
       for j in range(layer.kernel_size-1):
+        size = (j+1)*(layer.dilation_rate)
+        if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
+          # if first run create queues
+          self.qs[i][j] = tf.queue.FIFOQueue(
+            size+1,
+            tf.float32,
+            (batch_size,1,channels)
+          )
+        else:
+          # if not first run, clear queue
+          enqueued = self.qs[i][j].size().numpy()
+          self.qs[i][j].dequeue_many(enqueued)
         # first layer is different because it is filled with noise
-        # and first element is dequeued befor queued
         if i == 0:
-          size = j + 1
-          if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
-            # if first run create queues
-            self.qs[i][j] = tf.queue.FIFOQueue(
-              size,
-              tf.float32,
-              (batch_size,1,self._build_input_shape[2])
-            )
-          else:
-            # if not first run, clear queue
-            enqueued = self.qs[i][j].size().numpy()
-            self.qs[i][j].dequeue_many(enqueued)
           # initialize queue with noise
           self.qs[i][j].enqueue_many(
-            tf.random.normal((size,batch_size,1,self._build_input_shape[2])))
+            tf.random.normal((size,batch_size,1,channels)))
         else:
-          size = (j+1)*layer.dilation_rate
-          if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
-            # if first run create queues
-            self.qs[i][j] = tf.queue.FIFOQueue(
-              size,
-              tf.float32,
-              (batch_size,1,layer.channels)
-            )
-          else:
-            # if not first run, clear queue
-            enqueued = self.qs[i][j].size().numpy()
-            self.qs[i][j].dequeue_many(enqueued)
+          # initialize queue with zeros
           self.qs[i][j].enqueue_many(
-            tf.zeros((size-1,batch_size,1,layer.channels)))
+            tf.zeros((size,batch_size,1,channels)))
+      channels = layer.channels
 
-    for _ in tqdm(range(length)):
-      sample = self._generation(sample)
-      outputs.append(sample)
+    for _ in tqdm(range(length),'Generating samples'):
       for q in self.qs[0]:
         q.enqueue(sample)
+      sample = self._generation(sample)
+      outputs.append(sample)
+
+
+    return tf.concat(outputs, axis=1)
+
+  def generate_from_sample(self, length, sample,
+                           batch_size=2, training=False):
+    if training:
+      raise ValueError('This method should not be called during training.')
+
+    # get last sample from input and remove it
+    last = tf.expand_dims(sample[:,-1,:],axis=1)
+    sample = sample[:,:-1,:]
+
+    # pad sample if necessary
+    if sample.shape[1] < self.receptive_field:
+      sample = tf.pad(sample,[[0,0],
+                              [self.receptive_field-sample.shape[1],0],
+                              [0,0]])
+
+    cache = sample
+    channels = 1
+    for i,layer in enumerate(self.wavenet_layers):
+      for j in range(layer.kernel_size-1):
+        size = (j+1)*(layer.dilation_rate)
+        if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
+          # if first run create queues
+          self.qs[i][j] = tf.queue.FIFOQueue(
+            size+1,
+            tf.float32,
+            (batch_size,1,channels)
+          )
+        else:
+          # if not first run, clear queue
+          enqueued = self.qs[i][j].size().numpy()
+          self.qs[i][j].dequeue_many(enqueued)
+        # initialize queue with sample
+        # desired shape: (size,batch_size,1,channels)
+        init = cache[:,-size:,:]
+        init = tf.transpose(init, perm=[1,0,2])
+        init = tf.expand_dims(init, axis=2)
+        self.qs[i][j].enqueue_many(init)
+
+      # cache output of each layer
+      cache,_ = layer(cache, training=training)
+      channels = layer.channels
+
+    outputs = []
+    x = last # (batch,1,channels)
+    for _ in tqdm(range(length),'Generating samples based on sample'):
+      for q in self.qs[0]:
+        q.enqueue(x)
+      x = self._generation(x)
+      outputs.append(x)
+
 
     return tf.concat(outputs, axis=1)
 

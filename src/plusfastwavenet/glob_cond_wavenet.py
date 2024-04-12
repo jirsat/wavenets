@@ -75,7 +75,7 @@ class GlobCondWaveNet(tf.keras.Model):
     for dil in dilatations:
       self.receptive_field += dil*(kernel_size-1)
 
-  @tf.function
+  @tf.function(reduce_retracing=True)
   def call(self, inputs, training=False):
     """Call the model on input.
     
@@ -373,4 +373,3 @@ class GlobCondWaveNet(tf.keras.Model):
     Returns:
       float: Receptive field in seconds"""
     return self.receptive_field/sampling_frequency
-    

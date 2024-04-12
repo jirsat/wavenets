@@ -11,7 +11,7 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 # import tensorflow after setting environment variables
 import tensorflow as tf
 from src.plusfastwavenet.non_cond_wavenet import NonCondWaveNet
-from src.plusfastwavenet.loss import MixtureLoss
+from src.plusfastwavenet.loss import MixtureNormalLoss
 from src.callbacks import UnconditionedSoundCallback, create_spectogram
 # pylint: enable=wrong-import-position
 
@@ -78,7 +78,7 @@ example_batch = train_dataset.take(1).get_single_element()
 
 # Create model
 model = NonCondWaveNet(config['kernel_size'], config['channels'],
-                       config['layers'], MixtureLoss,
+                       config['layers'], MixtureNormalLoss,
                        config['dilatation_bound'])
 
 # Compile model
