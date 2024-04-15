@@ -34,7 +34,6 @@ preview_length = 8000 * 4
 # Load data
 dataset = tf.data.Dataset.load('./datasets/vctk8000')
 FS = 8000
-BITS = 16
 
 # take 1 male (59 ~ p286) and 1 female (4 ~ p229) speaker
 # into test set and the rest into training set
@@ -51,7 +50,7 @@ test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
 
 train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
 test_dataset = test_dataset.batch(config['batch_size'])
-example_batch = train_dataset.take(1).get_single_element()
+example_batch = test_dataset.take(1).get_single_element()
 
 # Create rebatch
 model = NonCondWaveNet(config['kernel_size'], config['channels'],
@@ -71,7 +70,8 @@ callbacks = [
     frequency=FS,
     epoch_frequency=10,
     samples=preview_length,
-    apply_mulaw=False
+    initial_sample=example_batch,
+    apply_mulaw=False,
   ),
   tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(10,15),

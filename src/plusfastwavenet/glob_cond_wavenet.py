@@ -165,7 +165,6 @@ class GlobCondWaveNet(tf.keras.Model):
     )
     return samples
 
-  @tf.function
   def _generation(self,x,cond):
     """Generate one sample from model.
 
@@ -276,17 +275,11 @@ class GlobCondWaveNet(tf.keras.Model):
     for i,layer in zip(range(len(self.wavenet_layers)),self.wavenet_layers):
       for j in range(layer.kernel_size-1):
         size = (j+1)*(layer.dilation_rate)
-        if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
-          # if first run create queues
-          self.qs[i][j] = tf.queue.FIFOQueue(
-            size+1,
-            tf.float32,
-            (batch_size,1,channels)
-          )
-        else:
-          # if not first run, clear queue
-          enqueued = self.qs[i][j].size().numpy()
-          self.qs[i][j].dequeue_many(enqueued)
+        self.qs[i][j] = tf.queue.FIFOQueue(
+          size+1,
+          tf.float32,
+          (batch_size,1,channels)
+        )
         # first layer is different because it is filled with noise
         if i == 0:
           # initialize queue with noise
@@ -298,10 +291,11 @@ class GlobCondWaveNet(tf.keras.Model):
             tf.zeros((size,batch_size,1,channels)))
       channels = layer.channels
 
+    gen_function = tf.function(self._generation)
     for _ in tqdm(range(length),'Generating samples'):
       for q in self.qs[0]:
         q.enqueue(sample)
-      sample = self._generation(sample,condition)
+      sample = gen_function(sample,condition)
       outputs.append(sample)
 
 
@@ -352,17 +346,11 @@ class GlobCondWaveNet(tf.keras.Model):
     for i,layer in enumerate(self.wavenet_layers):
       for j in range(layer.kernel_size-1):
         size = (j+1)*(layer.dilation_rate)
-        if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
-          # if first run create queues
-          self.qs[i][j] = tf.queue.FIFOQueue(
-            size+1,
-            tf.float32,
-            (batch_size,1,channels)
-          )
-        else:
-          # if not first run, clear queue
-          enqueued = self.qs[i][j].size().numpy()
-          self.qs[i][j].dequeue_many(enqueued)
+        self.qs[i][j] = tf.queue.FIFOQueue(
+          size+1,
+          tf.float32,
+          (batch_size,1,channels)
+        )
         # initialize queue with sample
         # desired shape: (size,batch_size,1,channels)
         init = cache[:,-size:,:]
@@ -377,10 +365,11 @@ class GlobCondWaveNet(tf.keras.Model):
 
     outputs = []
     x = last # (batch,1,channels)
+    gen_function = tf.function(self._generation)
     for _ in tqdm(range(length),'Generating samples based on sample'):
       for q in self.qs[0]:
         q.enqueue(x)
-      x = self._generation(x,condition)
+      x = gen_function(x,condition)
       outputs.append(x)
 
 

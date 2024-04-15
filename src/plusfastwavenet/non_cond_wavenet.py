@@ -160,7 +160,6 @@ class NonCondWaveNet(tf.keras.Model):
     )
     return samples
 
-  @tf.function
   def _generation(self,x):
     """Generate one sample from model.
 
@@ -262,17 +261,11 @@ class NonCondWaveNet(tf.keras.Model):
     for i,layer in zip(range(len(self.wavenet_layers)),self.wavenet_layers):
       for j in range(layer.kernel_size-1):
         size = (j+1)*(layer.dilation_rate)
-        if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
-          # if first run create queues
-          self.qs[i][j] = tf.queue.FIFOQueue(
-            size+1,
-            tf.float32,
-            (batch_size,1,channels)
-          )
-        else:
-          # if not first run, clear queue
-          enqueued = self.qs[i][j].size().numpy()
-          self.qs[i][j].dequeue_many(enqueued)
+        self.qs[i][j] = tf.queue.FIFOQueue(
+          size+1,
+          tf.float32,
+          (batch_size,1,channels)
+        )
         # first layer is different because it is filled with noise
         if i == 0:
           # initialize queue with noise
@@ -284,10 +277,11 @@ class NonCondWaveNet(tf.keras.Model):
             tf.zeros((size,batch_size,1,channels)))
       channels = layer.channels
 
+    gen_function = tf.function(self._generation)
     for _ in tqdm(range(length),'Generating samples'):
       for q in self.qs[0]:
         q.enqueue(sample)
-      sample = self._generation(sample)
+      sample = gen_function(sample)
       outputs.append(sample)
 
     return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
@@ -322,6 +316,7 @@ class NonCondWaveNet(tf.keras.Model):
     # get last sample from input and remove it
     last = tf.expand_dims(sample[:,-1,:],axis=1)
     sample = sample[:,:-1,:]
+    batch_size = sample.shape[0]
 
     # pad sample if necessary
     if sample.shape[1] < self.receptive_field:
@@ -334,17 +329,11 @@ class NonCondWaveNet(tf.keras.Model):
     for i,layer in enumerate(self.wavenet_layers):
       for j in range(layer.kernel_size-1):
         size = (j+1)*(layer.dilation_rate)
-        if not isinstance(self.qs[i][j],tf.queue.FIFOQueue):
-          # if first run create queues
-          self.qs[i][j] = tf.queue.FIFOQueue(
-            size+1,
-            tf.float32,
-            (batch_size,1,channels)
-          )
-        else:
-          # if not first run, clear queue
-          enqueued = self.qs[i][j].size().numpy()
-          self.qs[i][j].dequeue_many(enqueued)
+        self.qs[i][j] = tf.queue.FIFOQueue(
+          size+1,
+          tf.float32,
+          (batch_size,1,channels)
+        )
         # initialize queue with sample
         # desired shape: (size,batch_size,1,channels)
         init = cache[:,-size:,:]
@@ -358,10 +347,11 @@ class NonCondWaveNet(tf.keras.Model):
 
     outputs = []
     x = last # (batch,1,channels)
+    gen_function = tf.function(self._generation)
     for _ in tqdm(range(length),'Generating samples based on sample'):
       for q in self.qs[0]:
         q.enqueue(x)
-      x = self._generation(x)
+      x = gen_function(x)
       outputs.append(x)
 
 

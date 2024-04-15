@@ -91,6 +91,7 @@ callbacks = [
     samples=preview_length,
     condition=example_cond,
     apply_mulaw=False,
+    initial_sample=(example_batch,example_cond),
   ),
   tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(15,25),

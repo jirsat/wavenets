@@ -71,7 +71,8 @@ callbacks = [
     frequency=FS,
     epoch_frequency=10,
     samples=preview_length,
-    condition=example_cond
+    condition=example_cond,
+    initial_sample=(example_batch,example_cond)
   ),
   tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
                                  profile_batch=(10,15),
