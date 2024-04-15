@@ -19,7 +19,7 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
       epoch_frequency (int): Frequency of saving sound
       samples (int): How many samples to generate.
         i.e. Desired length / sample rate
-      apply_mulaw (bool): Whether to apply mu-law transformation, 
+      apply_mulaw (bool): Whether to apply mu-law transformation,
         default True for backwards compatibility
     """
     super().__init__()
@@ -71,7 +71,7 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
       samples (int): How many samples to generate.
         i.e. Desired length / sample rate
       condition (tf.Tensor): Condition for the model
-      apply_mulaw (bool): Whether to apply mu-law transformation, 
+      apply_mulaw (bool): Whether to apply mu-law transformation,
         default True for backwards compatibility
       initial_sample (tf.Tensor): Initial sample for the model
         to generate novel sample from. Defaults to None (only random noise),
@@ -134,7 +134,7 @@ def inverse_mu_law(y: tf.Tensor):
 
 def create_spectogram(data: tf.Tensor, sample_rate: int):
   """Create spectogram from audio data
-  
+
   Args:
     data (tf.Tensor): Audio data
     sample_rate (int): Sample rate of the audio data

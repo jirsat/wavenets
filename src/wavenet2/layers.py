@@ -66,7 +66,7 @@ class WaveNetLayer(tf.keras.layers.Layer):
 
 class CondWaveNetLayer(tf.keras.layers.Layer):
   """Conditional WaveNet layer.
-      
+
   This layer strictly follows paper and does include conditioning.
   As the logic in layer for global and local conditioning is the same, this is
   something that should be managed in model; layer is agnostic in this regard.

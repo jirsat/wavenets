@@ -60,7 +60,7 @@ class GlobCondWaveNet(tf.keras.Model):
   @tf.function
   def call(self, inputs, training=False):
     """Call the model on input.
-    
+
     Args:
       inputs (tuple): Input tensor and condition tensor
       training (bool): Whether the model is training
@@ -111,7 +111,7 @@ class GlobCondWaveNet(tf.keras.Model):
         stack.append(q.dequeue())
 
       stack.reverse()
-      inputs = tf.concat(stack,axis=1)
+      inputs = tf.concat(stack,axis=1) # pylint: disable=E1123,E1120
       x, skip = layer.generate((inputs,cond))
 
       # add outputs to queues
@@ -140,13 +140,13 @@ class GlobCondWaveNet(tf.keras.Model):
 
   def generate(self, length, condition=None, training=False):
     """Generate samples from model.
-    
+
     This method is used for generating samples during inference and
     can be called directly. The method generates samples from random
     noise and returns the generated samples. It is not decorated with
     tf.function decorator to allow for dynamic length of generated
     samples and to speed up the first call.
-    
+
     Args:
       length (int): Length of generated recordings
       condition (tf.Tensor): Condition on which to generate the data. Optional
@@ -208,12 +208,12 @@ class GlobCondWaveNet(tf.keras.Model):
       for q in self.qs[0]:
         q.enqueue(sample)
 
-    return tf.concat(outputs, axis=1)
+    return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
 
   @tf.function
   def train_step(self, data):
     """Train the model on input data.
-    
+
     Args:
       data (tuple): Tuple of input data and condtion. The input data
         should be of shape batch_size x length+1 x 1 and the condition
@@ -238,4 +238,3 @@ class GlobCondWaveNet(tf.keras.Model):
     Returns:
       float: Receptive field in seconds"""
     return self.receptive_field/sampling_frequency
-    

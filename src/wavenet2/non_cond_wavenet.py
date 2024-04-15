@@ -81,7 +81,7 @@ class NonCondWaveNet(tf.keras.Model):
     This method is used for generating samples during inference and should
     not be called directly. This function is decorated with tf.function
     decorator to speed up the computation.
-    
+
     Args:
       x (tf.Tensor): Input tensor
       training (bool): Whether the model is training
@@ -97,13 +97,13 @@ class NonCondWaveNet(tf.keras.Model):
 
   def generate(self, length, batch_size=1, training=False):
     """Generate samples from model.
-    
+
     This method is used for generating samples during inference and
     can be called directly. The method generates samples from random
     noise and returns the generated samples. It is not decorated with
     tf.function decorator to allow for dynamic length of generated
     samples and to speed up the first call.
-    
+
     Args:
       length (int): Length of generated recordings
       batch_size (int): Number of recordings to generate
@@ -118,15 +118,15 @@ class NonCondWaveNet(tf.keras.Model):
 
     for _ in tqdm(range(length),'Generating samples'):
       sample = self._generate_one_sample(x)
-      x = tf.concat([x[:,1:,:], sample], axis=1)
+      x = tf.concat([x[:,1:,:], sample], axis=1) # pylint: disable=E1123,E1120
       outputs.append(sample)
 
-    return tf.concat(outputs, axis=1)
+    return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
 
   @tf.function
   def train_step(self, data):
     """Train the model on input data.
-    
+
     Args:
       data (tf.Tensor): Input data which should be of shape
         batch_size x length+1 x 1"""
@@ -144,7 +144,7 @@ class NonCondWaveNet(tf.keras.Model):
 
   def compute_receptive_field(self,sampling_frequency):
     """Compute the receptive field of the WaveNet model.
-    
+
     Args:
       sampling_frequency (int): Sampling frequency of the model
     Returns:

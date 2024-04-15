@@ -19,7 +19,7 @@ class WaveNetLayer(tf.keras.layers.Layer):
       dilatation_channels (int): Number of channels in dillatated conv
                                  for gate and same for filter, if None
                                   it is set to channels
-      skip_channels (int): Number of channels in skip connection, 
+      skip_channels (int): Number of channels in skip connection,
                            If None, than only one 1x1 convolution is used
                            and skip connection is the same as main connection
                            before adding residual connection
@@ -84,7 +84,7 @@ class WaveNetLayer(tf.keras.layers.Layer):
 
 class CondWaveNetLayer(tf.keras.layers.Layer):
   """Conditional WaveNet layer.
-      
+
   This layer strictly follows paper and does include conditioning.
   As the logic in layer for global and local conditioning is the same, this is
   something that should be managed in model; layer is agnostic in this regard.
@@ -102,7 +102,7 @@ class CondWaveNetLayer(tf.keras.layers.Layer):
       dilatation_channels (int): Number of channels in dillatated conv
                                  for gate and same for filter, if None
                                   it is set to channels
-      skip_channels (int): Number of channels in skip connection, 
+      skip_channels (int): Number of channels in skip connection,
                            If None, than only one 1x1 convolution is used
                            and skip connection is the same as main connection
                            before adding residual connection

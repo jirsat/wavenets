@@ -27,7 +27,7 @@ class NonCondWaveNet(tf.keras.Model):
       bits (int): Number of bits in input data
       skip_channels (int): Number of channels in skip connections
       dilatation_channels (int): Number of channels in dilatated conv
-      l2_reg_factor (float): L2 regularization factor, if None or 0 no 
+      l2_reg_factor (float): L2 regularization factor, if None or 0 no
                              regularization is used
     """
     super().__init__(**kwargs)
@@ -113,7 +113,7 @@ class NonCondWaveNet(tf.keras.Model):
   )
   def sample_from_output(self, weights, means, log_scales):
     """Sample from output distribution.
-    
+
     Args:
       weights (tf.Tensor): Weights tensor
       means (tf.Tensor): Means tensor
@@ -147,7 +147,7 @@ class NonCondWaveNet(tf.keras.Model):
   def sample_track(self, weights, means, log_scales):
     """Sample from output distribution. Takes a whole track as input.
     This means that the input tensors has shape (batch, length, mixtures).
-    
+
     Args:
       weights (tf.Tensor): Weights tensor
       means (tf.Tensor): Means tensor
@@ -156,7 +156,7 @@ class NonCondWaveNet(tf.keras.Model):
       tf.Tensor: Sampled tensor"""
     samples = tf.map_fn(
       lambda x: self.sample_from_output(*tf.split(x, 3, axis=-1)),
-      tf.concat([weights, means, log_scales], axis=-1)
+      tf.concat([weights, means, log_scales], axis=-1) # pylint: disable=E1123,E1120
     )
     return samples
 
@@ -180,7 +180,7 @@ class NonCondWaveNet(tf.keras.Model):
         stack.append(q.dequeue())
 
       stack.reverse()
-      inputs = tf.concat(stack,axis=1)
+      inputs = tf.concat(stack,axis=1) # pylint: disable=E1123,E1120
       x, skip = layer.generate(inputs)
 
       # add outputs to queues
@@ -207,13 +207,13 @@ class NonCondWaveNet(tf.keras.Model):
 
   def generate(self, length, batch_size=2, training=False):
     """Generate samples from model.
-    
+
     This method is used for generating samples during inference and
     can be called directly. The method generates samples from random
     noise and returns the generated samples. It is not decorated with
     tf.function decorator to allow for dynamic length of generated
     samples and to speed up the first call.
-    
+
     Args:
       length (int): Length of generated recordings
       batch_size (int): Number of recordings to generate
@@ -261,7 +261,7 @@ class NonCondWaveNet(tf.keras.Model):
       outputs.append(sample)
 
 
-    return tf.concat(outputs, axis=1)
+    return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
 
   def generate_from_sample(self, length, sample,
                            batch_size=2, training=False):
@@ -314,12 +314,12 @@ class NonCondWaveNet(tf.keras.Model):
       outputs.append(x)
 
 
-    return tf.concat(outputs, axis=1)
+    return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
 
   @tf.function
   def train_step(self, data):
     """Train the model on input data.
-    
+
     Args:
       data (tf.Tensor): Input data which should be of shape
         batch_size x length+1 x 1"""
@@ -346,7 +346,7 @@ class NonCondWaveNet(tf.keras.Model):
 
   def compute_receptive_field(self,sampling_frequency):
     """Compute the receptive field of the WaveNet model.
-    
+
     Args:
       sampling_frequency (int): Sampling frequency of the model
     Returns:
