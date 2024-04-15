@@ -13,8 +13,8 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 from src.fastwavenet.non_cond_wavenet import NonCondWaveNet
 from src.callbacks import UnconditionedSoundCallback, inverse_mu_law, create_spectogram
+from src.utils import preprocess_dataset, train_test_split
 # pylint: enable=wrong-import-position
-
 
 config = {
     'kernel_size': 4,
@@ -33,54 +33,21 @@ preview_length = 48000 * 4
 dataset = tfds.load('vctk', split='train', shuffle_files=False,
                     data_dir='./datasets/vctk')
 FS = 48000
-BITS = 16
 
 # take 1 male (59 ~ p286) and 1 female (4 ~ p229) speaker
 # into test set and the rest into training set
 test_speakers = [59, 4]
 
-@tf.function
-def filter_fn(x):
-  speaker = x['speaker']
-  outputs = tf.reduce_any(speaker == test_speakers)
-  return outputs
-
-test_dataset = dataset.filter(filter_fn)
-train_dataset = dataset.filter(lambda x: not filter_fn(x))
+train_dataset, test_dataset = train_test_split(dataset, test_speakers)
 
 # Preprocess data
-@tf.function(input_signature=[tf.TensorSpec(shape=(None,1), dtype=tf.float32)])
-def convert_and_split(x):
-  # convert 16bit integers (passed as floats) to floats [-1, 1]
-  # the integers are from -2^15 to 2^15-1, therefore we ony need to divide them
-  x = (x / (2.0**(BITS-1)))
+train_dataset = preprocess_dataset(train_dataset, config['recording_length'],
+                                   apply_mulaw=True, condition=False)
+test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
+                                  apply_mulaw=True, condition=False)
 
-  # apply the mu-law as in the original paper
-  x = tf.sign(x) * (tf.math.log(1.0 + 255.0*tf.abs(x)) / tf.math.log(256.0))
-
-  # split into chunks of size config['recording_lenght']
-  x = tf.signal.frame(x, axis=0,
-                      frame_length=config['recording_length']+1,
-                      frame_step=config['recording_length'])
-
-  return x
-
-def preprocess(inputs):
-  # as we are not using conditioning, we can just take the audio
-  x = tf.cast(inputs['speech'],tf.float32)
-
-  # add channel dimension
-  x = tf.expand_dims(x, axis=-1)
-
-  # cut the audio into chunks of length recording_length
-  x = convert_and_split(x)
-
-  # the one-hot encoding is done in the training loopd
-  return x
-
-train_dataset = train_dataset.map(preprocess).unbatch()
 train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
-test_dataset = test_dataset.map(preprocess).rebatch(config['batch_size'])
+test_dataset = test_dataset.batch(config['batch_size'])
 example_batch = train_dataset.take(1).get_single_element()
 
 # Create model

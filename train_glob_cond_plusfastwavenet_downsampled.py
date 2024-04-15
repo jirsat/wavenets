@@ -13,6 +13,7 @@ import tensorflow as tf
 from src.plusfastwavenet.glob_cond_wavenet import GlobCondWaveNet
 from src.callbacks import ConditionedSoundCallback, create_spectogram
 from src.plusfastwavenet.loss import MixtureNormalLoss
+from src.utils import train_test_split, preprocess_dataset
 # pylint: enable=wrong-import-position
 
 
@@ -38,50 +39,21 @@ preview_length = 8000 * 4
 # Load data
 dataset = tf.data.Dataset.load('./datasets/vctk8000')
 FS = 8000
-BITS = 16
 
 # take 1 male (59 ~ p286) and 1 female (4 ~ p229) speaker
 # into test set and the rest into training set
 test_speakers = [59, 4]
 
-@tf.function
-def select_test(x):
-  speaker = x['speaker']
-  outputs = tf.reduce_any(speaker == test_speakers)
-  return outputs
-
-test_dataset = dataset.filter(select_test)
-train_dataset = dataset.filter(lambda x: not select_test(x))
+train_dataset, test_dataset = train_test_split(dataset, test_speakers)
 
 # Preprocess data
-@tf.function(input_signature=[tf.TensorSpec(shape=(None,1), dtype=tf.float32)])
-def convert_and_split(x):
-  # split into chunks of size config['recording_lenght']
-  x = tf.signal.frame(x, axis=0,
-                      frame_length=config['recording_length']+1,
-                      frame_step=config['recording_length'])
+train_dataset = preprocess_dataset(train_dataset, config['recording_length'],
+                                   apply_mulaw=False, condition=True)
+test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
+                                  apply_mulaw=False, condition=True)
 
-  return x
-
-def preprocess(inputs):
-  # as we are not using conditioning, we can just take the audio
-  x = tf.cast(inputs['speech'],tf.float32)
-
-  # add channel dimension
-  x = tf.expand_dims(x, axis=-1)
-
-  # cut the audio into chunks of length recording_length
-  x = convert_and_split(x)
-
-  # prepare the condition
-  condition = tf.one_hot(inputs['gender'], 2)
-  condition = tf.broadcast_to(condition, [tf.shape(x)[0],2])
-
-  return (x, condition)
-
-train_dataset = train_dataset.map(preprocess).unbatch()
 train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
-test_dataset = test_dataset.map(preprocess).rebatch(config['batch_size'])
+test_dataset = test_dataset.batch(config['batch_size'])
 example_batch,example_cond = train_dataset.take(1).get_single_element()
 
 # filter the training dataset to be sure, that the length of the

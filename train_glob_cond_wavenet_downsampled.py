@@ -12,6 +12,7 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=2,--tf_xla_cpu_global_jit'
 import tensorflow as tf
 from src.wavenet.glob_cond_wavenet import GlobCondWaveNet
 from src.callbacks import ConditionedSoundCallback, inverse_mu_law, create_spectogram
+from src.utils import train_test_split, preprocess_dataset
 # pylint: enable=wrong-import-position
 
 
@@ -31,53 +32,21 @@ preview_length = 8000 * 4
 # Load data
 dataset = tf.data.Dataset.load('./datasets/vctk8000')
 FS = 8000
-BITS = 16
 
 # take 1 male (59 ~ p286) and 1 female (4 ~ p229) speaker
 # into test set and the rest into training set
 test_speakers = [59, 4]
 
-@tf.function
-def filter_fn(x):
-  speaker = x['speaker']
-  outputs = tf.reduce_any(speaker == test_speakers)
-  return outputs
-
-test_dataset = dataset.filter(filter_fn)
-train_dataset = dataset.filter(lambda x: not filter_fn(x))
+train_dataset, test_dataset = train_test_split(dataset, test_speakers)
 
 # Preprocess data
-@tf.function(input_signature=[tf.TensorSpec(shape=(None,1), dtype=tf.float32)])
-def convert_and_split(x):
-  # apply the mu-law as in the original paper
-  x = tf.sign(x) * (tf.math.log(1.0 + 255.0*tf.abs(x)) / tf.math.log(256.0))
+train_dataset = preprocess_dataset(train_dataset, config['recording_length'],
+                                   apply_mulaw=True, condition=True)
+test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
+                                  apply_mulaw=True, condition=True)
 
-  # split into chunks of size config['recording_lenght']
-  x = tf.signal.frame(x, axis=0,
-                      frame_length=config['recording_length']+1,
-                      frame_step=config['recording_length'])
-
-  return x
-
-def preprocess(inputs):
-  # as we are not using conditioning, we can just take the audio
-  x = tf.cast(inputs['speech'],tf.float32)
-
-  # add channel dimension
-  x = tf.expand_dims(x, axis=-1)
-
-  # cut the audio into chunks of length recording_length
-  x = convert_and_split(x)
-
-  # prepare the condition
-  condition = tf.one_hot(inputs['gender'], 2)
-  condition = tf.broadcast_to(condition, [tf.shape(x)[0],2])
-
-  return (x, condition)
-
-train_dataset = train_dataset.map(preprocess).unbatch()
 train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
-test_dataset = test_dataset.map(preprocess).rebatch(config['batch_size'])
+test_dataset = test_dataset.batch(config['batch_size'])
 example_batch,example_cond = train_dataset.take(1).get_single_element()
 
 # Create model
