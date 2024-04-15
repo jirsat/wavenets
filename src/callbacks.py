@@ -5,7 +5,9 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
   """Callback for saving generated sound"""
   def __init__(self, log_dir, frequency: int,
                epoch_frequency: int, samples: int,
-               apply_mulaw: bool = True):
+               apply_mulaw: bool = True,
+               initial_sample = None,
+               test_queue: bool = False):
     """Initialize callback
 
     The callback saves generated sound to tensorboard log directory
@@ -21,6 +23,10 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
         i.e. Desired length / sample rate
       apply_mulaw (bool): Whether to apply mu-law transformation,
         default True for backwards compatibility
+      initial_sample (tf.Tensor): Initial sample for the model
+        to generate novel sample from. Defaults to None (only random noise)
+      test_queue (bool): Whether to generate sound both with and
+        without queue
     """
     super().__init__()
     self.writer = tf.summary.create_file_writer(log_dir)
@@ -28,6 +34,8 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
     self.log_freq = epoch_frequency
     self.samples = samples
     self.apply_mulaw = apply_mulaw
+    self.test_queue = test_queue
+    self.initial_sample = initial_sample
 
   def on_epoch_end(self, epoch, logs=None):
     """Save generated sound on epoch end"""
@@ -38,6 +46,27 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
       if self.apply_mulaw:
         batch = inverse_mu_law(batch)
       spectogram = create_spectogram(batch,self.frequency)
+      if self.initial_sample is not None:
+        wave = self.initial_sample
+        initial = self.model.generate_from_sample(self.samples, wave)
+        if self.apply_mulaw:
+          initial = inverse_mu_law(initial)
+        initial_spectogram = create_spectogram(initial,self.frequency)
+      if self.test_queue:
+        queue = self.model.generate(self.samples,
+                                    batch_size=5,
+                                    use_queue=False)
+        if self.apply_mulaw:
+          queue = inverse_mu_law(queue)
+        queue_spectogram = create_spectogram(queue,self.frequency)
+      if self.initial_sample is not None and self.test_queue:
+        queue_initial = self.model.generate_from_sample(self.samples, wave,
+                                                        use_queue=False)
+        if self.apply_mulaw:
+          queue_initial = inverse_mu_law(queue_initial)
+        queue_initial_spectogram = create_spectogram(queue_initial,
+                                                     self.frequency)
+
       with self.writer.as_default():
         tf.summary.audio('generated',
                          data=batch,
@@ -49,6 +78,39 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
                          data=spectogram,
                          step=epoch,
                          max_outputs=5)
+        if self.initial_sample is not None:
+          tf.summary.audio('with_initial',
+                           data=initial,
+                           step=epoch,
+                           sample_rate=self.frequency,
+                           encoding='wav',
+                           max_outputs=5)
+          tf.summary.image('generated_spectogram_with_initial',
+                          data=initial_spectogram,
+                          step=epoch,
+                          max_outputs=5)
+        if self.test_queue:
+          tf.summary.audio('generated_without_queue',
+                           data=queue,
+                           step=epoch,
+                           sample_rate=self.frequency,
+                           encoding='wav',
+                           max_outputs=5)
+          tf.summary.image('generated_without_queue_spectogram',
+                          data=queue_spectogram,
+                          step=epoch,
+                          max_outputs=5)
+          if self.initial_sample is not None:
+            tf.summary.audio('with_initial_without_queue',
+                             data=queue_initial,
+                             step=epoch,
+                             sample_rate=self.frequency,
+                             encoding='wav',
+                             max_outputs=5)
+            tf.summary.image('generated_spectogram_with_initial_without_queue',
+                            data=queue_initial_spectogram,
+                            step=epoch,
+                            max_outputs=5)
 
 
 class ConditionedSoundCallback(tf.keras.callbacks.Callback):
@@ -56,6 +118,7 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
   def __init__(self, log_dir, frequency: int,
                epoch_frequency: int, samples: int,
                condition: tf.Tensor, apply_mulaw: bool = True,
+               test_queue: bool = False,
                initial_sample = None):
     """Initialize callback
 
@@ -73,6 +136,8 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
       condition (tf.Tensor): Condition for the model
       apply_mulaw (bool): Whether to apply mu-law transformation,
         default True for backwards compatibility
+      test_queue (bool): Whether to generate sound both with and
+        without queue
       initial_sample (tf.Tensor): Initial sample for the model
         to generate novel sample from. Defaults to None (only random noise),
         expected input is (waveform,condition)
@@ -85,6 +150,7 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
     self.condition = condition
     self.apply_mulaw = apply_mulaw
     self.initial_sample = initial_sample
+    self.test_queue = test_queue
 
   def on_epoch_end(self, epoch, logs=None):
     """Save generated sound on epoch end"""
@@ -99,6 +165,21 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
         initial = self.model.generate_from_sample(self.samples, wave, cond)
         if self.apply_mulaw:
           initial = inverse_mu_law(initial)
+      if self.test_queue:
+        queue = self.model.generate(self.samples,
+                                    condition=self.condition,
+                                    use_queue=False)
+        if self.apply_mulaw:
+          queue = inverse_mu_law(queue)
+        queue_spectogram = create_spectogram(queue,self.frequency)
+      if self.initial_sample is not None and self.test_queue:
+        queue_initial = self.model.generate_from_sample(self.samples, wave,
+                                                        cond, use_queue=False)
+        if self.apply_mulaw:
+          queue_initial = inverse_mu_law(queue_initial)
+        queue_initial_spectogram = create_spectogram(queue_initial,
+                                                     self.frequency)
+
       spectogram = create_spectogram(batch,self.frequency)
       with self.writer.as_default():
         tf.summary.audio('generated',
@@ -123,6 +204,28 @@ class ConditionedSoundCallback(tf.keras.callbacks.Callback):
                           data=spectogram,
                           step=epoch,
                           max_outputs=5)
+        if self.test_queue:
+          tf.summary.audio('generated_without_queue',
+                           data=queue,
+                           step=epoch,
+                           sample_rate=self.frequency,
+                           encoding='wav',
+                           max_outputs=5)
+          tf.summary.image('generated_without_queue_spectogram',
+                          data=queue_spectogram,
+                          step=epoch,
+                          max_outputs=5)
+          if self.initial_sample is not None:
+            tf.summary.audio('with_initial_without_queue',
+                             data=queue_initial,
+                             step=epoch,
+                             sample_rate=self.frequency,
+                             encoding='wav',
+                             max_outputs=5)
+            tf.summary.image('generated_spectogram_with_initial_without_queue',
+                            data=queue_initial_spectogram,
+                            step=epoch,
+                            max_outputs=5)
 
 
 @tf.function(input_signature=[

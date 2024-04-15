@@ -212,7 +212,27 @@ class GlobCondWaveNet(tf.keras.Model):
 
     return sample
 
-  def generate(self, length, condition=None, training=False):
+  @tf.function
+  def _generation_no_queues(self, x, cond):
+    """Generate one sample from model.
+
+    This function is based on wavenet idea and implements
+    generation without queues.
+
+    Args:
+      x (tf.Tensor): Input tensor of shape (batch,length,1)
+      cond (tf.Tensor): Condition tensor of shape (batch,encoding_size)
+    Returns:
+      tf.Tensor: Output tensor"""
+    weights, means, log_scales = self([x,cond], training=False)
+    # sample from output
+    sample = self.sample_from_output(weights[:,-1,:],
+                                     means[:,-1,:],
+                                     log_scales[:,-1,:])
+
+    return tf.expand_dims(sample,axis=1)
+
+  def generate(self, length, condition=None, use_queue=True, training=False):
     """Generate samples from model.
 
     This method is used for generating samples during inference and
@@ -227,6 +247,7 @@ class GlobCondWaveNet(tf.keras.Model):
         The condition is of shape batch x encoding_size. Batch size of generated
         data is infered from shape of condition tensor. If condition is not
         provided then batch size is 1.
+      use_queue (bool): Whether to use queues for generation
       training (bool): Whether the model is training
     Returns:
       tf.Tensor: Output tensor"""
@@ -235,6 +256,17 @@ class GlobCondWaveNet(tf.keras.Model):
     batch_size = condition.shape[0] if condition is not None else 2
     if condition is None:
       condition = tf.zeros((batch_size,2))
+    if not use_queue:
+      input_shape= (batch_size,length,1)
+      x = tf.random.normal(input_shape)
+      outputs =  []
+      for _ in tqdm(range(length),'Generating samples'):
+        pred = self._generation_no_queues(x, condition)
+        outputs.append(pred)
+        x = tf.concat([x,pred],axis=1)[:,-length:,:] # pylint: disable=E1123,E1120
+
+      return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
+
     input_shape= (batch_size,1,1)
     sample = tf.random.normal(shape=input_shape)
     outputs = []
@@ -276,7 +308,19 @@ class GlobCondWaveNet(tf.keras.Model):
     return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
 
   def generate_from_sample(self, length, sample,
-                           condition=None, training=False):
+                           condition=None, use_queue=True,
+                           training=False):
+    """Generate samples from model based on input sample.
+
+    Args:
+      length (int): Length of generated recordings
+      sample (tf.Tensor): Sample on which to base the generation
+      condition (tf.Tensor): Condition on which to generate the data. Optional
+        The condition is of shape batch x encoding_size. Batch size of generated
+        data is infered from shape of condition tensor. If condition is not
+        provided then batch size is 1.
+      use_queue (bool): Whether to use queues for generation
+      training (bool): Whether the model is training"""
     if training:
       raise ValueError('This method should not be called during training.')
     batch_size = sample.shape[0]
@@ -284,6 +328,14 @@ class GlobCondWaveNet(tf.keras.Model):
       condition = tf.zeros((batch_size,2))
     elif condition.shape[0] != batch_size:
       raise ValueError('Condition must have the same batch size as sample.')
+    if not use_queue:
+      x = sample
+      outputs =  []
+      for _ in tqdm(range(length),'Generating samples based on sample'):
+        pred = self._generation_no_queues(x,condition)
+        outputs.append(pred)
+        x = tf.concat([x,pred],axis=1)[:,-length:,:] # pylint: disable=E1123,E1120
+      return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
 
     # get last sample from input and remove it
     last = tf.expand_dims(sample[:,-1,:],axis=1)

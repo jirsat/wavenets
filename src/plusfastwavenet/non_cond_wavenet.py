@@ -204,8 +204,26 @@ class NonCondWaveNet(tf.keras.Model):
 
     return sample
 
+  @tf.function
+  def _generation_no_queues(self,x):
+    """Generate one sample from model.
 
-  def generate(self, length, batch_size=2, training=False):
+    This function is based on wavenet idea and implements
+    generation without queues.
+
+    Args:
+      x (tf.Tensor): Input tensor of shape (batch,length,)
+    Returns:
+      tf.Tensor: Output tensor"""
+    weights, means, log_scales = self(x, training=False)
+    # sample from output
+    sample = self.sample_from_output(weights[:,-1,:],
+                                     means[:,-1,:],
+                                     log_scales[:,-1,:])
+
+    return tf.expand_dims(sample,axis=1)
+
+  def generate(self, length, batch_size=2, use_queue=True, training=False):
     """Generate samples from model.
 
     This method is used for generating samples during inference and
@@ -217,11 +235,23 @@ class NonCondWaveNet(tf.keras.Model):
     Args:
       length (int): Length of generated recordings
       batch_size (int): Number of recordings to generate
+      queue (bool): Whether to use queues for fast generation
       training (bool): Whether the model is training
     Returns:
       tf.Tensor: Output tensor"""
     if training:
       raise ValueError('This method should not be called during training.')
+    if not use_queue:
+      input_shape= (batch_size,length,1)
+      x = tf.random.normal(input_shape)
+      outputs =  []
+      for _ in tqdm(range(length),'Generating samples'):
+        pred = self._generation_no_queues(x)
+        outputs.append(pred)
+        x = tf.concat([x,pred],axis=1)[:,-length:,:] # pylint: disable=E1123,E1120
+
+      return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
+
 
     input_shape= (batch_size,1,1)
     sample = tf.random.normal(input_shape)
@@ -260,13 +290,34 @@ class NonCondWaveNet(tf.keras.Model):
       sample = self._generation(sample)
       outputs.append(sample)
 
-
     return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
 
   def generate_from_sample(self, length, sample,
-                           batch_size=2, training=False):
+                           batch_size=2, use_queue=True,
+                           training=False):
+    """Generate samples from model based on input sample.
+
+    This method is used for generating samples during inference and
+    can be called directly. The method generates samples based on
+    the input sample and returns the generated samples.
+
+    Args:
+      length (int): Length of generated recordings
+      sample (tf.Tensor): Input sample of shape (batch,length,1)
+      batch_size (int): Number of recordings to generate
+      use_queue (bool): Whether to use queues for fast generation
+      training (bool): Whether the model is training"""
     if training:
       raise ValueError('This method should not be called during training.')
+    if not use_queue:
+      x = sample
+      outputs =  []
+      for _ in tqdm(range(length),'Generating samples'):
+        pred = self._generation_no_queues(x)
+        outputs.append(pred)
+        x = tf.concat([x,pred],axis=1)[:,-length:,:] # pylint: disable=E1123,E1120
+
+      return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
 
     # get last sample from input and remove it
     last = tf.expand_dims(sample[:,-1,:],axis=1)
