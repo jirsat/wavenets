@@ -211,7 +211,7 @@ class GlobCondWaveNet(tf.keras.Model):
 
     return sample
 
-  @tf.function
+  @tf.function(reduce_retracing=True)
   def _generation_no_queues(self, x, cond):
     """Generate one sample from model.
 
@@ -329,6 +329,7 @@ class GlobCondWaveNet(tf.keras.Model):
         pred = self._generation_no_queues(x,condition)
         outputs.append(pred)
         x = tf.concat([x,pred],axis=1)[:,-length:,:] # pylint: disable=E1123,E1120
+        assert x.shape == tf.concat([x,pred],axis=1)[:,-length:,:].shape
       return tf.concat(outputs, axis=1) # pylint: disable=E1123,E1120
 
     # get last sample from input and remove it

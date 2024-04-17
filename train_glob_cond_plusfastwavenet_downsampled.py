@@ -22,17 +22,17 @@ config = {
     'channels': 32,
     'dilatation_channels': 32,
     'skip_channels': 256,
-    'layers': 50,
-    'dilatation_bound': 512,
-    'batch_size': 16,
+    'layers': 40,
+    'dilatation_bound': 256,
+    'batch_size': 64,
     'epochs': 500,
     'lr': 0.001,
     'recording_length': 8000,
     'num_mixtures': 10,
-    'l2_reg': 0.001,
+    'l2_reg': 0.01,
 }
-run_name = 'globcond_plusfastwavenet_8000'
-preview_length = 8000 * 4
+run_name = 'globcond_plusfastwavenet_4_8000'
+preview_length = 8000 * 2
 
 
 
@@ -87,17 +87,18 @@ callbacks = [
   ConditionedSoundCallback(
     './logs/'+run_name,
     frequency=FS,
-    epoch_frequency=5,
+    epoch_frequency=10,
     samples=preview_length,
     condition=example_cond,
     apply_mulaw=False,
     initial_sample=(example_batch,example_cond),
+    test_queue=True
   ),
   tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
-                                 profile_batch=(15,25),
+                                 profile_batch=(10,25),
                                  write_graph=False),
-  tf.keras.callbacks.ReduceLROnPlateau(monitor='mean_squared_error',
-                                      factor=0.2,
+  tf.keras.callbacks.ReduceLROnPlateau(monitor='MixtureNormalLoss',
+                                      factor=0.5,
                                       patience=5,
                                       min_lr=1e-6)
 ]

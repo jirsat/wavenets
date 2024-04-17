@@ -221,7 +221,9 @@ class CondWaveNetLayer(tf.keras.layers.Layer):
     self.dilation_rate = dilation_rate
     self.channels = channels
 
-  @tf.function
+  @tf.function(
+    reduce_retracing=True
+  )
   def call(self, inputs):
     """
     Call method for conditional WaveNet layer.

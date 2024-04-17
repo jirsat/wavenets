@@ -53,6 +53,7 @@ class UnconditionedSoundCallback(tf.keras.callbacks.Callback):
           initial = inverse_mu_law(initial)
         initial_spectogram = create_spectogram(initial,self.frequency)
       if self.test_queue:
+        print('Testing without queue')
         queue = self.model.generate(self.samples,
                                     batch_size=5,
                                     use_queue=False)
