@@ -126,6 +126,8 @@ class WaveNetLayer(tf.keras.layers.Layer):
       if x_shape[1] != cond_shape[1]:
         raise ValueError('Condition tensor must have the same length as input')
     # input shape is (batch, samples, channels)
+    else:
+      x_shape = input_shape
     if self.residual:
       res = x_shape
     if self.dropout is not None:
@@ -140,19 +142,21 @@ class WaveNetLayer(tf.keras.layers.Layer):
         raise ValueError('Condition tensor must have the same length as input')
     
     x_shape = (x_shape[0],x_shape[1],x_shape[2]//2)
-    
-    if self.conv_skip is not None:
-      skip_shape = self.conv_skip.build(x_shape)
-    else:
-      skip_shape = x_shape
 
     self.conv1.build(x_shape)
-    x_shape = self.conv1.compute_output_shape(x_shape)
+    x_out_shape = self.conv1.compute_output_shape(x_shape)
+
+    if self.conv_skip is None:
+      skip_shape = x_out_shape
+    else:
+      self.conv_skip.build(x_shape)
+      skip_shape = self.conv_skip.compute_output_shape(x_shape)
+
     if self.residual:
-      if x_shape != res:
+      if x_out_shape != res:
         raise ValueError('Residual connection must have the same shape as input')
     self.built = True
-    self.output_shape=(x_shape,skip_shape)
+    self.output_shape=(x_out_shape,skip_shape)
 
   def compute_output_shape(self, input_shape):
     """Compute output shape for WaveNet layer.
