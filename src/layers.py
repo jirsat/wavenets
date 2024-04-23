@@ -49,20 +49,31 @@ class WaveNetLayer(tf.keras.layers.Layer):
     if dilation_channels is None:
       dilation_channels = channels
 
+    if not isinstance(dilation_rate, list):
+      dilation_rate = [dilation_rate]
+    self.input_dilation = dilation_rate[0]
+    self.depth = len(dilation_rate)
+
+    self.kernel_size = kernel
+    self.channels = channels
+    self.residual = residual
+
+
+
     # if dilation_rate is list, create stack of dilated convolutions
     self.dilated_stack = []
-    if isinstance(dilation_rate, list):
-      for dil in dilation_rate[:-1]:
-        self.dilated_stack.append(
-          tf.keras.layers.Conv1D(
-            filters=dilation_channels,
-            kernel_size=kernel,
-            dilation_rate=dil,
-            padding='causal',
-            activation=activation,
-            kernel_regularizer=tf.keras.regularizers.L2(reg)))
-      # last dilation rate is for gated activation
-      dilation_rate = dilation_rate[-1]
+      
+    for dil in dilation_rate[:-1]:
+      self.dilated_stack.append(
+        tf.keras.layers.Conv1D(
+          filters=dilation_channels,
+          kernel_size=kernel,
+          dilation_rate=dil,
+          padding='causal',
+          activation=activation,
+          kernel_regularizer=tf.keras.regularizers.L2(reg)))
+    # last dilation rate is for gated activation
+    dilation_rate = dilation_rate[-1]
 
     # save activation for queues
     self.activation = activation
@@ -107,11 +118,6 @@ class WaveNetLayer(tf.keras.layers.Layer):
         filters=2*dilation_channels,
         kernel_size=1,
         kernel_regularizer=tf.keras.regularizers.L2(reg))
-
-    self.kernel_size = kernel
-    self.dilation_rate = dilation_rate
-    self.channels = channels
-    self.residual = residual
 
   def build(self, input_shape):
     """Build method for WaveNet layer.
