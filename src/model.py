@@ -1,9 +1,9 @@
 """Wavenet model"""
 
 import math
+from tqdm import tqdm
 import numpy as np
 import tensorflow as tf
-import tensorflow_probability as tfp
 from src.layers import WaveNetLayer
 
 class WaveNet(tf.keras.Model):
@@ -64,6 +64,8 @@ class WaveNet(tf.keras.Model):
     if sampling_function not in ['categorical', 'logistic','gaussian']:
       raise ValueError('Sampling function must be categorical, '+
         'logistic or gaussian.')
+    if sampling_function == 'categorical' and num_mixtures is not None:
+      raise ValueError('Categorical sampling cannot be used with mixtures.')
 
     self.regularization = l2_reg_factor>0
     self.num_mixtures = num_mixtures
@@ -75,6 +77,7 @@ class WaveNet(tf.keras.Model):
     max_power = int(math.log(dilation_bound, kernel_size))
     dilations = [kernel_size**(i % max_power)
                    for i in range(layers_per_block*blocks)]
+
 
     self.causal = tf.keras.layers.Conv1D(
       filters=channels,
@@ -195,6 +198,7 @@ class WaveNet(tf.keras.Model):
       layer.build(x_shape)
       x_shape = layer.compute_output_shape(x_shape)
     self.optimizer.build(self.trainable_variables)
+
     self.built = True
 
   def call(self, inputs, training=False):
@@ -233,19 +237,52 @@ class WaveNet(tf.keras.Model):
         x (tf.Tensor): input tensor or tuple
         use_queues (bool): use queues for generation
     """
-    raise NotImplementedError('Generation not implemented yet.')
+    if use_queues:
+      raise NotImplementedError('Generation not implemented yet.')
 
-  def generate(self, length, condition=None, sample = None, use_queues=False):
+    predictions = self(x, training=False)
+    pred = predictions[:,-1,:]
+    pred = tf.expand_dims(pred, axis=1)
+    sample = self.sample_waveform(pred)
+    return sample
+
+  def generate(self, length, batch_size: int = 1, condition=None, sample = None, use_queues=False):
     """Generate audio from model
 
     Args:
         length (int): length of the audio
+        batch_size (int): batch size for generation (ignored if sample or condition is provided)
         condition (tf.Tensor): condition tensor
         sample (tf.Tensor): sample tensor (instead of noise)
         use_queues (bool): use queues for generation
     """
     if self.conditioning is not None and condition is None:
       raise ValueError('Conditioning must be provided.')
+    if condition is not None and sample is not None:
+      if tf.shape(condition)[0] != tf.shape(sample)[0]:
+        raise ValueError('Condition and sample must have same batch size.')
+    if not use_queues:
+      if condition is not None:
+        batch_size = tf.shape(condition)[0]
+      if sample is None:
+        sample = tf.random.stateless_normal((batch_size,self.receptive_field,1),seed=(4,2))
+      x = sample
+      output = []
+
+      # prepare description
+      desc = f'Generating {"from sample" if sample is not None else "from noise"} '
+      desc += f'{"with" if use_queues else "without"} queues'
+      for _ in tqdm(range(length),
+                    desc=desc,total=length,
+                    unit='sample',unit_scale=True): 
+        if self.conditioning is not None:
+          inputs = [x,condition]
+        else:
+          inputs = x
+        predicted = self._generation(inputs, use_queues=False)
+        output.append(predicted)
+        x = tf.concat([x[:,1:],predicted],axis=1)
+      return tf.concat(output,axis=1)
     raise NotImplementedError('Generation not implemented yet.')
 
   def train_step(self, data):
@@ -285,38 +322,67 @@ class WaveNet(tf.keras.Model):
       out_dict['regularization'] = reg_loss
     return out_dict
 
-  @tf.function(reduce_retracing=False,)
-  def sample_waveform(self, pred):
-    """Sample waveform from prediction
+
+  def sample_waveform(self, inputs):
+    """Sample waveform from network output
 
     Args:
-        pred (tf.Tensor): prediction tensor
+        inputs (tf.Tensor): prediction tensor
     Returns:
         tf.Tensor: sampled waveform, shape same as pred but last
           dimension is 1
     """
     if self.sampling_function == 'categorical':
-      out = tfp.distributions.Categorical(
-        probs=pred,dtype=tf.float32).sample(1)
-      out = out/2**(self.bits-1)-1
+      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None), dtype=tf.float32)])
+      def sampling_fn(pred):
+        samples = tf.random.stateless_categorical(tf.math.log(pred),1,seed=(4,2),dtype=tf.int32)
+        samples = tf.cast(samples,tf.float32)
+        return samples/2.0**(self.bits-1) - 1.0
     elif self.sampling_function == 'gaussian':
-      weights, means, log_scales = tf.split(pred, 3, axis=-1)
-      out = tfp.distributions.MixtureSameFamily(
-        mixture_distribution=tfp.distributions.Categorical(
-          logits=weights),
-        components_distribution=tfp.distributions.Normal(
-          loc=means, scale=tf.exp(log_scales))).sample(1)
+      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None), dtype=tf.float32)])
+      def sampling_fn(pred):
+        weights, means, log_scales = tf.split(pred, 3, axis=-1)
+
+        selected = tf.random.stateless_categorical(weights,1,seed=(4,2),dtype=tf.int32)
+        selected = tf.squeeze(selected,axis=-1)
+
+
+        selected = tf.one_hot(selected,depth=self.num_mixtures)
+        mu = tf.reduce_sum(selected*means,axis=-1)
+        scale = tf.reduce_sum(selected*tf.exp(log_scales),axis=-1)
+
+        z = tf.random.stateless_normal(shape=tf.shape(mu),seed=(4,2))
+
+        samples = mu + z *scale
+
+        samples = tf.expand_dims(samples,axis=-1)
+
+        return tf.clip_by_value(samples,-1,1)
     elif self.sampling_function == 'logistic':
-      weights, means, log_scales = tf.split(pred, 3, axis=-1)
-      out = tfp.distributions.MixtureSameFamily(
-        mixture_distribution=tfp.distributions.Categorical(
-          logits=weights),
-        components_distribution=tfp.distributions.Logistic(
-          loc=means, scale=tf.exp(log_scales))).sample(1)
+      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None), dtype=tf.float32)])
+      def sampling_fn(pred):
+        weights, means, log_scales = tf.split(pred, 3, axis=-1)
+
+        selected = tf.random.stateless_categorical(weights,1,seed=(4,2),dtype=tf.int32)
+        selected = tf.squeeze(selected,axis=-1)
+
+
+        selected = tf.one_hot(selected,depth=self.num_mixtures)
+        mu = tf.reduce_sum(selected*means,axis=-1)
+        scale = tf.reduce_sum(selected*tf.exp(log_scales),axis=-1)
+
+        z = tf.random.stateless_uniform(shape=tf.shape(mu),seed=(4,2))
+
+        samples = mu + scale*(tf.math.log(z)-tf.math.log(1-z))
+
+        samples = tf.clip_by_value(samples,-1,1)
+        samples = tf.expand_dims(samples,axis=-1)
+        return samples
     else:
       raise NotImplementedError(f'Sampling {self.sampling_function}'+
         ' not implemented yet.')
-    return tf.transpose(out, [1, 2, 0])
+    outputs = tf.map_fn(sampling_fn, inputs)
+    return outputs #tf.transpose(out, [1, 2, 0])
 
   @tf.function
   def loss_fn(self,target, pred):
@@ -332,18 +398,31 @@ class WaveNet(tf.keras.Model):
       out = tf.keras.losses.sparse_categorical_crossentropy(target, pred)
     elif self.sampling_function == 'gaussian':
       weights, means, log_scales = tf.split(pred, 3, axis=-1)
-      out = tfp.distributions.MixtureSameFamily(
-        mixture_distribution=tfp.distributions.Categorical(
-          logits=weights),
-        components_distribution=tfp.distributions.Normal(
-          loc=means, scale=tf.exp(log_scales))).log_prob(target)
+      target = tf.repeat(target, self.num_mixtures, axis=-1)
+      weights = tf.nn.softmax(weights, axis=-1)
+
+      log_scales = tf.maximum(log_scales, -7) # to avoid NaNs - as in PixelCNN++
+      scales = tf.exp(log_scales)
+
+      x = tf.minimum((target-means)/scales,1e8)
+      likelihood = tf.reduce_sum(
+        weights*(
+          1.0/(scales*tf.sqrt(2.0*3.14159265359))*
+          tf.exp(-0.5*tf.square(x))
+        ),
+        axis=-1)
+      out = -1.0*tf.math.log(likelihood)
     elif self.sampling_function == 'logistic':
       weights, means, log_scales = tf.split(pred, 3, axis=-1)
-      out = tfp.distributions.MixtureSameFamily(
-        mixture_distribution=tfp.distributions.Categorical(
-          logits=weights),
-        components_distribution=tfp.distributions.Logistic(
-          loc=means, scale=tf.exp(log_scales))).log_prob(target)
+      target = tf.repeat(target, self.num_mixtures, axis=-1)
+      weights = tf.nn.softmax(weights, axis=-1)
+      halfbit = 0.5*1/(2**self.bits) # as ints are converted to floats
+      log_scales = tf.maximum(log_scales, -7) # to avoid NaNs - as in PixelCNN++
+      likelihood = tf.reduce_sum(
+        weights*(tf.nn.sigmoid((target-means+halfbit)*tf.exp(-1.0*log_scales))
+                 - tf.nn.sigmoid((target-means-halfbit)*tf.exp(-1.0*log_scales))),
+        axis=-1)
+      out = -1.0*tf.math.log(likelihood)
     else:
       raise NotImplementedError(f'Loss {self.sampling_function}'+
         ' not implemented.')
