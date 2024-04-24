@@ -6,6 +6,8 @@ import numpy as np
 import tensorflow as tf
 from src.layers import WaveNetLayer
 
+SQRT2PI = tf.sqrt(2.0*3.14159265359)
+
 class WaveNet(tf.keras.Model):
   """WaveNet model class"""
 
@@ -16,8 +18,8 @@ class WaveNet(tf.keras.Model):
                layers_per_block: int = 1,
                activation = None,
                conditioning = None,
-               mapping_layers = None, # TODO [2,2,2]
-               mapping_activation = None, # TODO 'relu'
+               mapping_layers = None,
+               mapping_activation = None,
                dropout: float = 0,
                dilation_bound: int = 512,
                num_mixtures = None,
@@ -175,7 +177,9 @@ class WaveNet(tf.keras.Model):
       self.mapping.build(input_shape[1])
       cond_shape = sequential_output_shape(self.mapping,input_shape[1])
       x_shape = input_shape[0]
-      cond_shape = (cond_shape[0],cond_shape[1]*(x_shape[1]//condition.shape[1]),cond_shape[2])
+      cond_shape = (cond_shape[0],
+                    cond_shape[1]*(x_shape[1]//cond_shape[1]),
+                    cond_shape[2])
     elif self.conditioning == 'global':
       self.mapping.build(input_shape[1])
       cond_shape = sequential_output_shape(self.mapping,input_shape[1])
@@ -246,12 +250,15 @@ class WaveNet(tf.keras.Model):
     sample = self.sample_waveform(pred)
     return sample
 
-  def generate(self, length, batch_size: int = 1, condition=None, sample = None, use_queues=False):
+  def generate(self, length, batch_size: int = 1,
+               condition = None, sample = None,
+               use_queues=False):
     """Generate audio from model
 
     Args:
         length (int): length of the audio
-        batch_size (int): batch size for generation (ignored if sample or condition is provided)
+        batch_size (int): batch size for generation 
+          (ignored if sample or condition is provided)
         condition (tf.Tensor): condition tensor
         sample (tf.Tensor): sample tensor (instead of noise)
         use_queues (bool): use queues for generation
@@ -265,16 +272,19 @@ class WaveNet(tf.keras.Model):
       if condition is not None:
         batch_size = tf.shape(condition)[0]
       if sample is None:
-        sample = tf.random.stateless_normal((batch_size,self.receptive_field,1),seed=(4,2))
+        sample = tf.random.stateless_normal((batch_size,self.receptive_field,1),
+                                            seed=(4,2))
       x = sample
       output = []
 
       # prepare description
-      desc = f'Generating {"from sample" if sample is not None else "from noise"} '
-      desc += f'{"with" if use_queues else "without"} queues'
+      desc = 'Generating '
+      desc += 'from sample' if sample is not None else 'from noise'
+      desc += 'with' if use_queues else 'without'
+      desc += ' queues'
       for _ in tqdm(range(length),
                     desc=desc,total=length,
-                    unit='sample',unit_scale=True): 
+                    unit='sample',unit_scale=True):
         if self.conditioning is not None:
           inputs = [x,condition]
         else:
@@ -333,17 +343,23 @@ class WaveNet(tf.keras.Model):
           dimension is 1
     """
     if self.sampling_function == 'categorical':
-      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None), dtype=tf.float32)])
+      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
+                                                  dtype=tf.float32)])
       def sampling_fn(pred):
-        samples = tf.random.stateless_categorical(tf.math.log(pred),1,seed=(4,2),dtype=tf.int32)
+        samples = tf.random.stateless_categorical(tf.math.log(pred),1,
+                                                  seed=(4,2),dtype=tf.int32)
         samples = tf.cast(samples,tf.float32)
         return samples/2.0**(self.bits-1) - 1.0
     elif self.sampling_function == 'gaussian':
-      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None), dtype=tf.float32)])
+      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
+                                                  dtype=tf.float32)])
       def sampling_fn(pred):
         weights, means, log_scales = tf.split(pred, 3, axis=-1)
 
-        selected = tf.random.stateless_categorical(weights,1,seed=(4,2),dtype=tf.int32)
+        weights = tf.nn.softmax(weights, axis=-1)
+        weights = tf.math.log(weights)
+        selected = tf.random.stateless_categorical(weights,1,seed=(4,2),
+                                                   dtype=tf.int32)
         selected = tf.squeeze(selected,axis=-1)
 
 
@@ -359,11 +375,15 @@ class WaveNet(tf.keras.Model):
 
         return tf.clip_by_value(samples,-1,1)
     elif self.sampling_function == 'logistic':
-      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None), dtype=tf.float32)])
+      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
+                                                  dtype=tf.float32)])
       def sampling_fn(pred):
         weights, means, log_scales = tf.split(pred, 3, axis=-1)
 
-        selected = tf.random.stateless_categorical(weights,1,seed=(4,2),dtype=tf.int32)
+        weights = tf.nn.softmax(weights, axis=-1)
+        weights = tf.math.log(weights)
+        selected = tf.random.stateless_categorical(weights,1,
+                                                   seed=(4,2),dtype=tf.int32)
         selected = tf.squeeze(selected,axis=-1)
 
 
@@ -399,6 +419,7 @@ class WaveNet(tf.keras.Model):
     elif self.sampling_function == 'gaussian':
       weights, means, log_scales = tf.split(pred, 3, axis=-1)
       target = tf.repeat(target, self.num_mixtures, axis=-1)
+
       weights = tf.nn.softmax(weights, axis=-1)
 
       log_scales = tf.maximum(log_scales, -7) # to avoid NaNs - as in PixelCNN++
@@ -407,8 +428,7 @@ class WaveNet(tf.keras.Model):
       x = tf.minimum((target-means)/scales,1e8)
       likelihood = tf.reduce_sum(
         weights*(
-          1.0/(scales*tf.sqrt(2.0*3.14159265359))*
-          tf.exp(-0.5*tf.square(x))
+          tf.exp(-0.5*tf.square(x))/(scales*SQRT2PI)
         ),
         axis=-1)
       out = -1.0*tf.math.log(likelihood)
@@ -416,11 +436,15 @@ class WaveNet(tf.keras.Model):
       weights, means, log_scales = tf.split(pred, 3, axis=-1)
       target = tf.repeat(target, self.num_mixtures, axis=-1)
       weights = tf.nn.softmax(weights, axis=-1)
+
       halfbit = 0.5*1/(2**self.bits) # as ints are converted to floats
+
       log_scales = tf.maximum(log_scales, -7) # to avoid NaNs - as in PixelCNN++
       likelihood = tf.reduce_sum(
-        weights*(tf.nn.sigmoid((target-means+halfbit)*tf.exp(-1.0*log_scales))
-                 - tf.nn.sigmoid((target-means-halfbit)*tf.exp(-1.0*log_scales))),
+        weights*(
+          tf.nn.sigmoid((target-means+halfbit)*tf.exp(-1.0*log_scales))
+          - tf.nn.sigmoid((target-means-halfbit)*tf.exp(-1.0*log_scales))
+        ),
         axis=-1)
       out = -1.0*tf.math.log(likelihood)
     else:
