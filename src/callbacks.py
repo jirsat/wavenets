@@ -112,7 +112,10 @@ class SoundCallback(tf.keras.callbacks.Callback):
                           step=epoch,
                           max_outputs=8)
 
-
+class AddLRToLogs(tf.keras.callbacks.Callback):
+  def on_epoch_end(self, epoch, logs=None):
+    del epoch
+    logs.update({'lr': self.model.optimizer.learning_rate.numpy()})
 
 @tf.function(input_signature=[
   tf.TensorSpec(shape=[None,None,None],dtype=tf.float32)])

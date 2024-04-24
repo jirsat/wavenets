@@ -2,8 +2,9 @@
 
 import os
 import time
+import argparse
+import yaml
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['TF_GPU_THREAD_MODE']='gpu_private'
 os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=1,--tf_xla_cpu_global_jit'
 
@@ -12,43 +13,75 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=1,--tf_xla_cpu_global_jit'
 import tensorflow as tf
 import tensorflow_datasets as tfds
 from src.model import WaveNet
-from src.callbacks import ConditionedSoundCallback, create_spectogram
+from src.callbacks import SoundCallback, create_spectogram, AddLRToLogs
 from src.utils import train_test_split, preprocess_dataset
 # pylint: enable=wrong-import-position
 
 
 config = {
   'epochs': 500,
-  'lr': 0.001,
+  'lr': 0.0005,
   'recording_length': 8000,
-  'batch_size': 8,
+  'batch_size': 64,
+  'apply_mulaw': False,
+  'jit_compile': False,
 
   'kernel_size': 2,
   'channels': 32,
-  'blocks': 10,
+  'blocks': 5,
   'layers_per_block': 5,
   'activation': 'leaky_relu',
-  'conditioning': 'global',
+  'conditioning': None, #'global', # global, local, None
   'mapping_layers': [8,16,32],
   'mapping_activation': 'leaky_relu',
-  'dropout': 0,
+  'dropout': 0.1,
   'dilation_bound': 256,
-  'num_mixtures': None,
-  'sampling_function': 'categorical',
-  'bits': 8,
+  'num_mixtures': 8,
+  'sampling_function': 'gaussian',
+  'bits': 16,
   'skip_channels': None,
   'dilation_channels': None,
   'use_resiudal': True,
   'use_skip': True,
-  'final_layers_channels': [256,256],
-  'l2_reg_factor': 0.01,
+  'final_layers_channels': [128,256],
+  'l2_reg_factor': 1.0,
 }
 
-run_name = 'rewrite_1_'
-run_name += f'{(config["conditioning"])}_{config["sampling_function"]}_'
+parser = argparse.ArgumentParser()
+parser.add_argument("--configfile", type=str)
+args = parser.parse_args()
+
+if args.configfile is None:
+  print('No config file provided, using default config')
+else:
+  with open(args.configfile) as f:
+    config.update(yaml.safe_load(f))
+
+
+run_name = args.configfile.split('/')[-1].split('.')[0]+'_'
+run_name += f'{(config["conditioning"])}cond_{config["sampling_function"]}_'
 run_name += f'{config["recording_length"]}'
 preview_length = 8000 * 4
 
+initial_epoch = 0
+if os.path.exists('./logs/'+run_name):
+  print('Run name already exists')
+  try:
+    checkpoints = os.listdir('./results/'+run_name)
+  except FileNotFoundError:
+    print('No checkpoints found')
+    print("Directory: ./results/", run_name)
+    exit("Rename or delete the old logs directory")
+  checkpoints.sort()
+  print('Checkpoints found:',checkpoints)
+  print('Resuming from last checkpoint')
+  checkpointname = checkpoints[-1]
+  filename = checkpointname.split('.')[0]
+  filename,learning_rate = filename.split('-lr')
+  initial_epoch = int(filename.split('-e')[-1])
+  print('Initial epoch: ',initial_epoch)
+  print('Learning rate: ',learning_rate)
+  config['lr'] = float(learning_rate)
 
 
 # Load data
@@ -65,56 +98,65 @@ train_dataset, test_dataset = train_test_split(dataset, test_speakers)
 
 # Preprocess data
 train_dataset = preprocess_dataset(train_dataset, config['recording_length'],
-                                   apply_mulaw=True, condition=True)
+                                   apply_mulaw=config['apply_mulaw'],
+                                   condition=config['conditioning'] is not None)
 test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
-                                  apply_mulaw=True, condition=True)
+                                  apply_mulaw=config['apply_mulaw'],
+                                  condition=config['conditioning'] is not None)
 
-train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
+train_dataset = train_dataset.shuffle(1000).batch(config['batch_size']).take(40) # TODO
 test_dataset = test_dataset.batch(config['batch_size'])
-example_batch,example_cond = train_dataset.take(1).get_single_element()
-
-# filter the training dataset to be sure, that the length of the
-# audio is as expected
-@tf.function(
-    input_signature=[tf.TensorSpec(shape=(None,None,1), dtype=tf.float32),
-                    tf.TensorSpec(shape=(None,2), dtype=tf.float32)])
-def filter_fn(x, y):
-  return tf.shape(x)[1] == config['recording_length']+1
-train_dataset = train_dataset.filter(filter_fn)
-
+if config['conditioning'] is not None:
+  example_batch, example_condition = train_dataset.take(1).get_single_element()
+else:
+  example_batch = train_dataset.take(1).get_single_element()
 
 
 # Prepare for model compilation
+if config['conditioning'] is not None:
+  initial_sample = (example_batch, example_condition)
+else:
+  initial_sample = example_batch
+
+
+
 callbacks = [
+  AddLRToLogs(),
   tf.keras.callbacks.ModelCheckpoint(
-    filepath='./tmp/'+run_name+'.weights.h5',
+    filepath='./results/'+run_name+'/weights-e{epoch}-lr{lr}.weights.h5',
     save_weights_only=True,
-    monitor='mean_squared_error',
-    mode='max',
+    monitor='loss',
+    mode='min',
     save_best_only=True),
-  # ConditionedSoundCallback(
-  #   './logs/'+run_name,
-  #   frequency=FS,
-  #   epoch_frequency=5,
-  #   samples=preview_length,
-  #   condition=example_cond,
-  #   apply_mulaw=False,
-  #   initial_sample=(example_batch,example_cond),
-  # ),
+  SoundCallback(
+    './logs/'+run_name,
+    sampling_frequency=FS,
+    epoch_frequency=5,
+    samples=preview_length,
+    condition=example_condition if config['conditioning'] is not None else None,
+    apply_mulaw=False,
+    initial_sample=initial_sample,
+  ),
   tf.keras.callbacks.TensorBoard(log_dir='./logs/'+run_name,
-                                 profile_batch=(15,25),
+                                 #profile_batch=(15,25),
                                  write_graph=False),
-  tf.keras.callbacks.ReduceLROnPlateau(monitor='mean_squared_error',
+  tf.keras.callbacks.ReduceLROnPlateau(monitor='loss',
                                       factor=0.2,
                                       patience=5,
-                                      min_lr=1e-6)
+                                      min_lr=2e-8,
+                                      min_delta=10,),
+  tf.keras.callbacks.EarlyStopping(monitor='loss',
+                                  patience=15,
+                                  min_delta=10,
+                                  restore_best_weights=True),
+  tf.keras.callbacks.TerminateOnNaN(),
 ]
 
 # Save example batch
 print('Example batch:')
 print(example_batch.shape)
-print("Min: ", tf.math.reduce_min(example_batch))
-print("Max: ", tf.math.reduce_max(example_batch))
+print('Min: ', tf.math.reduce_min(example_batch))
+print('Max: ', tf.math.reduce_max(example_batch))
 
 
 spectogram = create_spectogram(example_batch, FS)
@@ -156,10 +198,17 @@ with mirrored_strategy.scope():
   model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=config['lr'],
                                                    clipnorm=1.0),
                 metrics=[tf.keras.metrics.MeanSquaredError()],
-                jit_compile=True,)
+                jit_compile=config['jit_compile'],)
 
   # build the model
-  model((example_batch[:,:-1],example_cond))
+  #model((example_batch[:,:-1],example_cond))
+  if config['conditioning'] is not None:
+    model((example_batch[:,:-1],example_condition))
+  else:
+    model(example_batch[:,:-1])
+
+  if 'checkpointname' in locals():
+    model.load_weights('./results/'+run_name+'/'+checkpointname)
 
 # print receptive field
 print('Receptive field')
@@ -168,11 +217,12 @@ print(model.compute_receptive_field(FS),' seconds')
 
 # Train model
 model.fit(train_dataset, epochs=config['epochs'],
-          callbacks=callbacks)
+          callbacks=callbacks,
+          initial_epoch=initial_epoch)
 
 # Generate samples
 tic = time.time()
-samples = model.generate(preview_length,condition=example_cond)
+samples = model.generate(preview_length)#,condition=example_cond)
 tictoc = time.time()-tic
 print(f'Generation took {tictoc}s')
 print(f'Speed of generation was {preview_length/tictoc} samples/s')
