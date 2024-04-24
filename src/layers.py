@@ -62,7 +62,7 @@ class WaveNetLayer(tf.keras.layers.Layer):
 
     # if dilation_rate is list, create stack of dilated convolutions
     self.dilated_stack = []
-      
+
     for dil in dilation_rate[:-1]:
       self.dilated_stack.append(
         tf.keras.layers.Conv1D(
@@ -146,7 +146,7 @@ class WaveNetLayer(tf.keras.layers.Layer):
       cond_shape = self.conv_cond.compute_output_shape(cond_shape)
       if x_shape[1] != cond_shape[1]:
         raise ValueError('Condition tensor must have the same length as input')
-    
+
     x_shape = (x_shape[0],x_shape[1],x_shape[2]//2)
 
     self.conv1.build(x_shape)
@@ -158,9 +158,8 @@ class WaveNetLayer(tf.keras.layers.Layer):
       self.conv_skip.build(x_shape)
       skip_shape = self.conv_skip.compute_output_shape(x_shape)
 
-    if self.residual:
-      if x_out_shape != res:
-        raise ValueError('Residual connection must have the same shape as input')
+    if self.residual and x_out_shape != res:
+      raise ValueError('Residual connection must have the same shape as input')
     self.built = True
     self.output_shape=(x_out_shape,skip_shape)
 
