@@ -73,7 +73,13 @@ class SoundCallback(tf.keras.callbacks.Callback):
                                   use_queues=self.use_fast)
       generated['standard'] = batch
     if self.initial_sample is not None:
-      wave, cond = self.initial_sample
+      if self.condition is not None:
+        wave, cond = self.initial_sample
+        wave = wave[:8,:,:]
+        cond = cond[:8,:,:]
+      else:
+        wave = self.initial_sample[:8,:,:]
+        cond = None
       if self.use_fast == 'both':
         initial = self.model.generate(self.samples,
                                       batch_size=5, # will be ignored
