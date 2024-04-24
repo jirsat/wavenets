@@ -104,7 +104,9 @@ test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
                                   apply_mulaw=config['apply_mulaw'],
                                   condition=config['conditioning'] is not None)
 
-train_dataset = train_dataset.shuffle(1000).batch(config['batch_size']).take(40) # TODO
+train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
+train_dataset = train_dataset.prefetch(tf.data.AUTOTUNE)
+
 test_dataset = test_dataset.batch(config['batch_size'])
 if config['conditioning'] is not None:
   example_batch, example_condition = train_dataset.take(1).get_single_element()

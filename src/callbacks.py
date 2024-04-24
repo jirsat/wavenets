@@ -76,7 +76,7 @@ class SoundCallback(tf.keras.callbacks.Callback):
       if self.condition is not None:
         wave, cond = self.initial_sample
         wave = wave[:8,:,:]
-        cond = cond[:8,:,:]
+        cond = cond[:8,:]
       else:
         wave = self.initial_sample[:8,:,:]
         cond = None
