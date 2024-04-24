@@ -48,7 +48,7 @@ def preprocess_dataset(dataset, recording_length, apply_mulaw, condition):
       cond = tf.broadcast_to(cond, [tf.shape(x)[0],2])
       return (x, cond)
     return x
-  
+
   def downscale(inputs):
     x = tf.cast(inputs['speech'],tf.float32)
     inputs['speech'] = x / 2**15
@@ -71,11 +71,13 @@ def preprocess_dataset(dataset, recording_length, apply_mulaw, condition):
 
   # preprocess dataset
   if tf.math.reduce_max(dataset.take(1).get_single_element()['speech']) > 2:
-    print('Seems like the dataset is not normalized correctly, ','trying to normalize it to [-1,1] by dividing by 2^15.')
+    print('Seems like the dataset is not normalized correctly, ',
+          'trying to normalize it to [-1,1] by dividing by 2^15.')
     dataset = dataset.map(downscale)
-    print('New max value: ', tf.math.reduce_max(dataset.take(1).get_single_element()['speech']))
+    print('New max value: ',
+          tf.math.reduce_max(dataset.take(1).get_single_element()['speech']))
   dataset = dataset.map(preprocess).unbatch()
-  
+
 
   # filter dataset to only recordings of correct length and finite values
   dataset = dataset.filter(filter_fn)
