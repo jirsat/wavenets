@@ -269,6 +269,12 @@ class WaveNet(tf.keras.Model):
       if tf.shape(condition)[0] != tf.shape(sample)[0]:
         raise ValueError('Condition and sample must have same batch size.')
     if not use_queues:
+      # prepare description
+      desc = 'Generating '
+      desc += 'from sample' if sample is not None else 'from noise'
+      desc += ' with' if use_queues else ' without'
+      desc += ' queues'
+
       if condition is not None:
         batch_size = tf.shape(condition)[0]
       if sample is None:
@@ -277,14 +283,9 @@ class WaveNet(tf.keras.Model):
       x = sample
       output = []
 
-      # prepare description
-      desc = 'Generating '
-      desc += 'from sample' if sample is not None else 'from noise'
-      desc += 'with' if use_queues else 'without'
-      desc += ' queues'
       for _ in tqdm(range(length),
                     desc=desc,total=length,
-                    unit='sample',unit_scale=True):
+                    unit='samples',unit_scale=True):
         if self.conditioning is not None:
           inputs = [x,condition]
         else:
@@ -314,10 +315,12 @@ class WaveNet(tf.keras.Model):
 
     with tf.GradientTape() as tape:
       pred = self(inputs, training=True)
-      loss = self.loss_fn(target, pred)
+      loss = tf.nn.compute_average_loss(
+        self.loss_fn(target, pred))
       loss_final = loss
       if self.regularization:
-        reg_loss = tf.reduce_sum(self.losses)
+        reg_loss = tf.nn.scale_regularization_loss(
+          tf.reduce_sum(self.losses))
         loss_final += reg_loss
     gradients = tape.gradient(loss_final, self.trainable_variables)
     self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
@@ -332,6 +335,33 @@ class WaveNet(tf.keras.Model):
       out_dict['regularization'] = reg_loss
     return out_dict
 
+  def test_step(self, data):
+    """Test step for the model
+    
+    Args:
+        data: input data, if conditioning is used, it should be a tuple
+    """
+    if self.conditioning is not None:
+      x, condition = data
+    else:
+      x = data
+    y_true = x[:, 1:, :]
+    target = self.prepare_target(x[:, 1:, :])
+    inputs = x[:, :-1, :]
+
+    if self.conditioning is not None:
+      inputs=[inputs,condition]
+
+    pred = self(inputs, training=False)
+    loss = tf.nn.compute_average_loss(
+        self.loss_fn(target, pred))
+    sample = self.sample_waveform(pred)
+    for metric in self.metrics:
+      metric.update_state(y_true, sample)
+
+    out_dict = {m.name: m.result() for m in self.metrics}
+    out_dict['loss'] = loss
+    return out_dict
 
   def sample_waveform(self, inputs):
     """Sample waveform from network output
@@ -450,7 +480,7 @@ class WaveNet(tf.keras.Model):
     else:
       raise NotImplementedError(f'Loss {self.sampling_function}'+
         ' not implemented.')
-    return tf.reduce_sum(out)
+    return out
 
   def compute_receptive_field(self,sampling_frequency):
     """Compute receptive field of the model
