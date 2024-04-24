@@ -13,7 +13,7 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=1,--tf_xla_cpu_global_jit'
 import tensorflow as tf
 import tensorflow_datasets as tfds
 from src.model import WaveNet
-from src.callbacks import SoundCallback, create_spectogram, AddLRToLogs
+from src.callbacks import SoundCallback, create_spectogram, AddLRToLogs, inverse_mu_law
 from src.utils import train_test_split, preprocess_dataset
 # pylint: enable=wrong-import-position
 
@@ -31,7 +31,7 @@ config = {
   'blocks': 5,
   'layers_per_block': 5,
   'activation': 'leaky_relu',
-  'conditioning': None, #'global', # global, local, None
+  'conditioning': 'global', # global, local, None
   'mapping_layers': [8,16,32],
   'mapping_activation': 'leaky_relu',
   'dropout': 0.1,
@@ -44,11 +44,11 @@ config = {
   'use_resiudal': True,
   'use_skip': True,
   'final_layers_channels': [128,256],
-  'l2_reg_factor': 1.0,
+  'l2_reg_factor': 0,
 }
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--configfile", type=str)
+parser.add_argument('--configfile', type=str)
 args = parser.parse_args()
 
 if args.configfile is None:
@@ -70,13 +70,13 @@ if os.path.exists('./logs/'+run_name):
     checkpoints = os.listdir('./results/'+run_name)
   except FileNotFoundError:
     print('No checkpoints found')
-    print("Directory: ./results/", run_name)
-    exit("Rename or delete the old logs directory")
+    print('Directory:', run_name)
+    exit('Rename or delete the old logs directory')
   checkpoints.sort()
   print('Checkpoints found:',checkpoints)
   print('Resuming from last checkpoint')
   checkpointname = checkpoints[-1]
-  filename = checkpointname.split('.')[0]
+  filename = checkpointname.split('.weights')[0]
   filename,learning_rate = filename.split('-lr')
   initial_epoch = int(filename.split('-e')[-1])
   print('Initial epoch: ',initial_epoch)
@@ -158,11 +158,14 @@ print(example_batch.shape)
 print('Min: ', tf.math.reduce_min(example_batch))
 print('Max: ', tf.math.reduce_max(example_batch))
 
-
-spectogram = create_spectogram(example_batch, FS)
+if config['apply_mulaw']:
+  sample_audio = inverse_mu_law(example_batch)
+else:
+  sample_audio = example_batch
+spectogram = create_spectogram(sample_audio, FS)
 with tf.summary.create_file_writer('./logs/'+run_name).as_default():
   tf.summary.audio('original',
-                   data=example_batch,
+                   data=sample_audio,
                    step=0,
                    sample_rate=FS,
                    encoding='wav',
@@ -218,11 +221,23 @@ print(model.compute_receptive_field(FS),' seconds')
 # Train model
 model.fit(train_dataset, epochs=config['epochs'],
           callbacks=callbacks,
+          validation_data=test_dataset,
           initial_epoch=initial_epoch)
 
 # Generate samples
 tic = time.time()
-samples = model.generate(preview_length)#,condition=example_cond)
+samples = model.generate(
+  preview_length,
+  batch_size=config['batch_size'],
+  condition=example_condition if config['conditioning'] is not None else None,
+)
 tictoc = time.time()-tic
 print(f'Generation took {tictoc}s')
 print(f'Speed of generation was {preview_length/tictoc} samples/s')
+
+os.makedirs('./results/'+run_name+'/samples', exist_ok=True)
+for i, sample in enumerate(samples):
+  if config['apply_mulaw']:
+    sample = inverse_mu_law(sample)
+  tf.io.write_file(f'./results/{run_name}/samples/sample_{i}.wav',
+                   tf.audio.encode_wav(sample, FS))
