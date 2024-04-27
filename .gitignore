@@ -168,3 +168,5 @@ datasets
 # generated files and folders
 tmp/
 logs/
+logs.old
+results/

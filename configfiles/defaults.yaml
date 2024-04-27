@@ -1,0 +1,27 @@
+epochs: 500
+lr: 0.0005
+recording_length: 8000
+batch_size: 64
+apply_mulaw: False
+jit_compile: False
+dataset: './datasets/svd8000'
+
+kernel_size: 2
+channels: 32
+blocks: 5
+layers_per_block: 5
+activation: 'leaky_relu' # any from keras
+conditioning: 'global' # 'global', 'local', null
+mapping_layers: [8,16,32]
+mapping_activation: 'leaky_relu' # any from keras
+dropout: 0.1
+dilation_bound: 256
+num_mixtures: 8
+sampling_function: 'gaussian' # 'gaussian', 'logistic', 'categorical'
+bits: 16 # 8, 16
+skip_channels: null # means None
+dilation_channels: null # means None
+use_resiudal: True
+use_skip: True
+final_layers_channels: [128,256]
+l2_reg_factor: 0.0
