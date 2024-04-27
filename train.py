@@ -25,6 +25,7 @@ config = {
   'batch_size': 64,
   'apply_mulaw': False,
   'jit_compile': False,
+  'dataset': './datasets/vctk8000',
 
   'kernel_size': 2,
   'channels': 32,
@@ -61,7 +62,7 @@ else:
 run_name = args.configfile.split('/')[-1].split('.')[0]+'_'
 run_name += f'{(config["conditioning"])}cond_{config["sampling_function"]}_'
 run_name += f'{config["recording_length"]}'
-preview_length = 8000 * 4
+preview_length = config["recording_length"] * 4
 
 initial_epoch = 0
 if os.path.exists('./logs/'+run_name):
@@ -85,24 +86,42 @@ if os.path.exists('./logs/'+run_name):
 
 
 # Load data
-dataset = tf.data.Dataset.load('./datasets/vctk8000')
-# dataset = tfds.load('vctk', split='train', shuffle_files=False,
-#                     data_dir='./datasets/vctk')
-FS = 8000
+if 'vctk8000' in config['dataset']:
+  dataset = tf.data.Dataset.load(config['dataset'])
+  FS = 8000
 
-# take 1 male (59 ~ p286) and 1 female (4 ~ p229) speaker
-# into test set and the rest into training set
-test_speakers = [59, 4]
+  # take 1 male (59 ~ p286) and 1 female (4 ~ p229) speaker
+  # into test set and the rest into training set
+  test_speakers = [59, 4]
 
-train_dataset, test_dataset = train_test_split(dataset, test_speakers)
+  train_dataset, test_dataset = train_test_split(dataset, test_speakers)
+  # Preprocess data
+  train_dataset = preprocess_dataset(train_dataset, config['recording_length'],
+                                     apply_mulaw=config['apply_mulaw'],
+                                     condition=config['conditioning'] is not None)
+  test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
+                                    apply_mulaw=config['apply_mulaw'],
+                                    condition=config['conditioning'] is not None)
+elif 'vctk' in config['dataset']:
+  dataset = tfds.load('vctk', split='train', shuffle_files=False,
+                      data_dir=config['dataset'])
+  FS = 48000
 
-# Preprocess data
-train_dataset = preprocess_dataset(train_dataset, config['recording_length'],
-                                   apply_mulaw=config['apply_mulaw'],
-                                   condition=config['conditioning'] is not None)
-test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
-                                  apply_mulaw=config['apply_mulaw'],
-                                  condition=config['conditioning'] is not None)
+  # take 1 male (59 ~ p286) and 1 female (4 ~ p229) speaker
+  # into test set and the rest into training set
+  test_speakers = [59, 4]
+
+  train_dataset, test_dataset = train_test_split(dataset, test_speakers)
+  # Preprocess data
+  train_dataset = preprocess_dataset(train_dataset, config['recording_length'],
+                                     apply_mulaw=config['apply_mulaw'],
+                                     condition=config['conditioning'] is not None)
+  test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
+                                    apply_mulaw=config['apply_mulaw'],
+                                    condition=config['conditioning'] is not None)
+else:
+  raise NotImplementedError('Dataset not implemented')
+
 
 train_dataset = train_dataset.shuffle(1000).batch(config['batch_size'])
 train_dataset = train_dataset.prefetch(tf.data.AUTOTUNE)

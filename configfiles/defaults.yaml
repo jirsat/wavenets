@@ -4,6 +4,7 @@ recording_length: 8000
 batch_size: 64
 apply_mulaw: False
 jit_compile: False
+dataset: './datasets/svd8000'
 
 kernel_size: 2
 channels: 32
