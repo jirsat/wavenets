@@ -105,7 +105,7 @@ class SoundCallback(tf.keras.callbacks.Callback):
       for key, batch in generated.items():
         if self.apply_mulaw:
           batch = inverse_mu_law(batch)
-        spectogram = create_spectogram(batch,self.sampling_frequency)
+        spectrogram = create_spectrogram(batch,self.sampling_frequency)
 
         tf.summary.audio('generated_'+key,
                          data=batch,
@@ -113,8 +113,8 @@ class SoundCallback(tf.keras.callbacks.Callback):
                          sample_rate=self.sampling_frequency,
                          encoding='wav',
                          max_outputs=8)
-        tf.summary.image('generated_spectogram',
-                          data=spectogram,
+        tf.summary.image('generated_spectrogram',
+                          data=spectrogram,
                           step=epoch,
                           max_outputs=8)
 
@@ -130,30 +130,30 @@ def inverse_mu_law(y: tf.Tensor):
   x = tf.sign(y)*(tf.pow(256.0,tf.abs(y))-1.0)/255.0
   return x
 
-def create_spectogram(data: tf.Tensor, sample_rate: int):
-  """Create spectogram from audio data
+def create_spectrogram(data: tf.Tensor, sample_rate: int):
+  """Create spectrogram from audio data
 
   Args:
     data (tf.Tensor): Audio data
     sample_rate (int): Sample rate of the audio data
   Returns:
-    tf.Tensor: Spectogram of the audio data
+    tf.Tensor: spectrogram of the audio data
   """
   del sample_rate
   data = tf.squeeze(data)
-  spectogram = tf.signal.stft(data,frame_length=256,
+  spectrogram = tf.signal.stft(data,frame_length=256,
                               frame_step=128)
-  spectogram = tf.abs(spectogram)
-  spectogram = tf.math.log(spectogram+1e-5)
-  spectogram = tf.squeeze(spectogram)
-  spectogram = tf.expand_dims(spectogram,-1)
+  spectrogram = tf.abs(spectrogram)
+  spectrogram = tf.math.log(spectrogram+1e-5)
+  spectrogram = tf.squeeze(spectrogram)
+  spectrogram = tf.expand_dims(spectrogram,-1)
 
   # permute to match tensorboard expectations
-  spectogram = tf.transpose(spectogram, perm=[0,2,1,3])
+  spectrogram = tf.transpose(spectrogram, perm=[0,2,1,3])
 
   # scale to 0-1
-  min_val = tf.reduce_min(spectogram)
-  spectogram = spectogram - min_val
-  max_val = tf.reduce_max(spectogram)
-  spectogram = spectogram / max_val
-  return spectogram
+  min_val = tf.reduce_min(spectrogram)
+  spectrogram = spectrogram - min_val
+  max_val = tf.reduce_max(spectrogram)
+  spectrogram = spectrogram / max_val
+  return spectrogram

@@ -337,7 +337,7 @@ class WaveNet(tf.keras.Model):
 
   def test_step(self, data):
     """Test step for the model
-    
+
     Args:
         data: input data, if conditioning is used, it should be a tuple
     """

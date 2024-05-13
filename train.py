@@ -13,7 +13,7 @@ os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=1,--tf_xla_cpu_global_jit'
 import tensorflow as tf
 import tensorflow_datasets as tfds
 from src.model import WaveNet
-from src.callbacks import SoundCallback, create_spectogram, AddLRToLogs, inverse_mu_law
+from src.callbacks import SoundCallback, create_spectrogram, AddLRToLogs, inverse_mu_law
 from src.utils import train_test_split, preprocess_dataset
 # pylint: enable=wrong-import-position
 
@@ -62,7 +62,7 @@ else:
 run_name = args.configfile.split('/')[-1].split('.')[0]+'_'
 run_name += f'{(config["conditioning"])}cond_{config["sampling_function"]}_'
 run_name += f'{config["recording_length"]}'
-preview_length = config["recording_length"] * 4
+preview_length = config['recording_length'] * 4
 
 initial_epoch = 0
 if os.path.exists('./logs/'+run_name):
@@ -96,12 +96,13 @@ if 'vctk8000' in config['dataset']:
 
   train_dataset, test_dataset = train_test_split(dataset, test_speakers)
   # Preprocess data
+  cond = config['conditioning'] is not None
   train_dataset = preprocess_dataset(train_dataset, config['recording_length'],
                                      apply_mulaw=config['apply_mulaw'],
-                                     condition=config['conditioning'] is not None)
+                                     condition=cond)
   test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
                                     apply_mulaw=config['apply_mulaw'],
-                                    condition=config['conditioning'] is not None)
+                                    condition=cond)
 elif 'vctk' in config['dataset']:
   dataset = tfds.load('vctk', split='train', shuffle_files=False,
                       data_dir=config['dataset'])
@@ -113,12 +114,13 @@ elif 'vctk' in config['dataset']:
 
   train_dataset, test_dataset = train_test_split(dataset, test_speakers)
   # Preprocess data
+  cond = config['conditioning'] is not None
   train_dataset = preprocess_dataset(train_dataset, config['recording_length'],
                                      apply_mulaw=config['apply_mulaw'],
-                                     condition=config['conditioning'] is not None)
+                                     condition=cond)
   test_dataset = preprocess_dataset(test_dataset, config['recording_length'],
                                     apply_mulaw=config['apply_mulaw'],
-                                    condition=config['conditioning'] is not None)
+                                    condition=cond)
 else:
   raise NotImplementedError('Dataset not implemented')
 
@@ -183,7 +185,7 @@ if config['apply_mulaw']:
   sample_audio = inverse_mu_law(example_batch)
 else:
   sample_audio = example_batch
-spectogram = create_spectogram(sample_audio, FS)
+spectrogram = create_spectrogram(sample_audio, FS)
 with tf.summary.create_file_writer('./logs/'+run_name).as_default():
   tf.summary.audio('original',
                    data=sample_audio,
@@ -191,8 +193,8 @@ with tf.summary.create_file_writer('./logs/'+run_name).as_default():
                    sample_rate=FS,
                    encoding='wav',
                    max_outputs=5)
-  tf.summary.image('original_spectogram',
-                   data=spectogram,
+  tf.summary.image('original_spectrogram',
+                   data=spectrogram,
                    step=0,
                    max_outputs=5)
 
