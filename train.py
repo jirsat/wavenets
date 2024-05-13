@@ -7,16 +7,17 @@ import yaml
 
 os.environ['TF_GPU_THREAD_MODE']='gpu_private'
 os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=1,--tf_xla_cpu_global_jit'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # pylint: disable=wrong-import-position
 # import tensorflow after setting environment variables
+import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
 from src.model import WaveNet
 from src.callbacks import SoundCallback, create_spectrogram, AddLRToLogs, inverse_mu_law
 from src.utils import train_test_split, preprocess_dataset
 # pylint: enable=wrong-import-position
-
 
 config = {
   'epochs': 500,
@@ -146,7 +147,7 @@ else:
 callbacks = [
   AddLRToLogs(),
   tf.keras.callbacks.ModelCheckpoint(
-    filepath='./results/'+run_name+'/weights-e{epoch}-lr{lr}.weights.h5',
+    filepath='./results/'+run_name+'/weights-e{epoch:04d}-lr{lr}.weights.h5',
     save_weights_only=True,
     monitor='loss',
     mode='min',
@@ -154,7 +155,7 @@ callbacks = [
   SoundCallback(
     './logs/'+run_name,
     sampling_frequency=FS,
-    epoch_frequency=5,
+    epoch_frequency=10,
     samples=preview_length,
     condition=example_condition if config['conditioning'] is not None else None,
     apply_mulaw=False,
@@ -245,7 +246,8 @@ print(model.compute_receptive_field(FS),' seconds')
 model.fit(train_dataset, epochs=config['epochs'],
           callbacks=callbacks,
           validation_data=test_dataset,
-          initial_epoch=initial_epoch)
+          initial_epoch=initial_epoch,
+          verbose=2)
 
 # Generate samples
 tic = time.time()
@@ -259,8 +261,10 @@ print(f'Generation took {tictoc}s')
 print(f'Speed of generation was {preview_length/tictoc} samples/s')
 
 os.makedirs('./results/'+run_name+'/samples', exist_ok=True)
+if config['apply_mulaw']:
+  samples = inverse_mu_law(samples)
+np.save(f'./results/{run_name}/samples/samples.npy', samples.numpy())
+
 for i, sample in enumerate(samples):
-  if config['apply_mulaw']:
-    sample = inverse_mu_law(sample)
   tf.io.write_file(f'./results/{run_name}/samples/sample_{i}.wav',
                    tf.audio.encode_wav(sample, FS))

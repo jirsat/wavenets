@@ -113,7 +113,7 @@ class SoundCallback(tf.keras.callbacks.Callback):
                          sample_rate=self.sampling_frequency,
                          encoding='wav',
                          max_outputs=8)
-        tf.summary.image('generated_spectrogram',
+        tf.summary.image('generated_spectrogram_'+key,
                           data=spectrogram,
                           step=epoch,
                           max_outputs=8)

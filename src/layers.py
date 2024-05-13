@@ -161,7 +161,7 @@ class WaveNetLayer(tf.keras.layers.Layer):
     if self.residual and x_out_shape != res:
       raise ValueError('Residual connection must have the same shape as input')
     self.built = True
-    self.output_shape=(x_out_shape,skip_shape)
+    self._output_shape=(x_out_shape,skip_shape)
 
   def compute_output_shape(self, input_shape):
     """Compute output shape for WaveNet layer.
@@ -173,7 +173,7 @@ class WaveNetLayer(tf.keras.layers.Layer):
     """
     if not self.built:
       raise ValueError('Layer is not built')
-    return self.output_shape
+    return self._output_shape
 
   def call(self, inputs, training = False):
     """Call method for WaveNet layer.

@@ -132,12 +132,12 @@ class WaveNet(tf.keras.Model):
       self.mapping = tf.keras.Sequential(
         [tf.keras.layers.Lambda(tf.expand_dims, arguments={'axis':-1})]
       )
-      self.mapping.add(layers=[
-        tf.keras.layers.Conv1D(
+      for layer in mapping_layers:
+        self.mapping.add(tf.keras.layers.Conv1D(
           kernel=1, filters= layer,
           activation=mapping_activation,
           kernel_regularizer=tf.keras.regularizers.L2(l2_reg_factor),
-        ) for layer in mapping_layers])
+        ))
     elif conditioning == 'global':
       self.mapping = tf.keras.Sequential(layers=[
         tf.keras.layers.Dense(
@@ -150,8 +150,7 @@ class WaveNet(tf.keras.Model):
 
     if num_mixtures is None:
       self.prepare_target = tf.keras.layers.Discretization(
-        bin_boundaries=np.linspace(-1, 1, num=2**bits+1).tolist()[1:-1],
-        num_bins=2**bits)
+        bin_boundaries=np.linspace(-1, 1, num=2**bits+1).tolist()[1:-1])
     else:
       self.prepare_target = lambda x: x
 
@@ -160,6 +159,13 @@ class WaveNet(tf.keras.Model):
     """
     if 'loss' in kwargs:
       raise ValueError('Loss must be set in the model init function.')
+    self._metrics_from_compilation = []
+    if 'metrics' in kwargs and kwargs['metrics'] is not None:
+      for metric in kwargs['metrics']:
+        self._metrics_from_compilation.append(metric)
+    self.loss_tracker = tf.keras.metrics.Mean(name='loss')
+    if self.regularization:
+      self.reg_loss = tf.keras.metrics.Mean(name='reg_loss')
     super(WaveNet, self).compile(**kwargs)
 
   def build(self, input_shape):
@@ -201,9 +207,8 @@ class WaveNet(tf.keras.Model):
     for layer in self.final:
       layer.build(x_shape)
       x_shape = layer.compute_output_shape(x_shape)
-    self.optimizer.build(self.trainable_variables)
-
     self.built = True
+    self.optimizer.build(self.trainable_variables)
 
   def call(self, inputs, training=False):
     """Call function for the model
@@ -247,12 +252,12 @@ class WaveNet(tf.keras.Model):
     predictions = self(x, training=False)
     pred = predictions[:,-1,:]
     pred = tf.expand_dims(pred, axis=1)
-    sample = self.sample_waveform(pred)
+    sample = self.sample_waveform(pred, deterministic=True)
     return sample
 
   def generate(self, length, batch_size: int = 1,
                condition = None, sample = None,
-               use_queues=False):
+               use_queues=False, deterministic=False):
     """Generate audio from model
 
     Args:
@@ -262,6 +267,7 @@ class WaveNet(tf.keras.Model):
         condition (tf.Tensor): condition tensor
         sample (tf.Tensor): sample tensor (instead of noise)
         use_queues (bool): use queues for generation
+        deterministic (bool): use deterministic generation
     """
     if self.conditioning is not None and condition is None:
       raise ValueError('Conditioning must be provided.')
@@ -278,19 +284,23 @@ class WaveNet(tf.keras.Model):
       if condition is not None:
         batch_size = tf.shape(condition)[0]
       if sample is None:
-        sample = tf.random.stateless_normal((batch_size,self.receptive_field,1),
-                                            seed=(4,2))
+        if deterministic:
+          sample = tf.zeros((batch_size,self.receptive_field,1))
+        else:
+          sample = tf.random.stateless_normal((batch_size,self.receptive_field,1),
+                                              seed=(4,2))
       x = sample
       output = []
 
-      for _ in tqdm(range(length),
-                    desc=desc,total=length,
-                    unit='samples',unit_scale=True):
+      print(desc)
+      for _ in tqdm(range(length),total=length,
+                    unit='samples',unit_scale=True,
+                    disable=None):
         if self.conditioning is not None:
           inputs = [x,condition]
         else:
           inputs = x
-        predicted = self._generation(inputs, use_queues=False)
+        predicted = self._generation(inputs, use_queues=False, deterministic=deterministic)
         output.append(predicted)
         x = tf.concat([x[:,1:],predicted],axis=1)
       return tf.concat(output,axis=1)
@@ -326,18 +336,32 @@ class WaveNet(tf.keras.Model):
     self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
     sample = self.sample_waveform(pred)
-    for metric in self.metrics:
-      metric.update_state(y_true, sample)
 
-    out_dict = {m.name: m.result() for m in self.metrics}
-    out_dict['loss'] = loss
+    for metric in self.metrics:
+      if metric.name == 'loss':
+        metric.update_state(loss)
+      elif metric.name == 'reg_loss':
+        metric.update_state(reg_loss)
+      else:
+        metric.update_state(y_true, sample)
+
+    return {m.name: m.result() for m in self.metrics}
+
+  @property
+  def metrics(self):
+    # Get compiled metrics
+    metrics = self._metrics_from_compilation
+
+    # Add loss and regularization to metrics
+    metrics.append(self.loss_tracker)
     if self.regularization:
-      out_dict['regularization'] = reg_loss
-    return out_dict
+      metrics.append(self.reg_loss)
+
+    return metrics
 
   def test_step(self, data):
     """Test step for the model
-
+    
     Args:
         data: input data, if conditioning is used, it should be a tuple
     """
@@ -356,78 +380,122 @@ class WaveNet(tf.keras.Model):
     loss = tf.nn.compute_average_loss(
         self.loss_fn(target, pred))
     sample = self.sample_waveform(pred)
+
     for metric in self.metrics:
-      metric.update_state(y_true, sample)
+      if metric.name == 'loss':
+        metric.update_state(loss)
+      else:
+        metric.update_state(y_true, sample)
 
     out_dict = {m.name: m.result() for m in self.metrics}
-    out_dict['loss'] = loss
     return out_dict
 
-  def sample_waveform(self, inputs):
+  def sample_waveform(self, inputs, deterministic=False):
     """Sample waveform from network output
 
     Args:
         inputs (tf.Tensor): prediction tensor
+        deterministic (bool): use deterministic sampling
     Returns:
         tf.Tensor: sampled waveform, shape same as pred but last
           dimension is 1
     """
     if self.sampling_function == 'categorical':
-      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
+      if not deterministic:
+        @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
                                                   dtype=tf.float32)])
-      def sampling_fn(pred):
-        samples = tf.random.stateless_categorical(tf.math.log(pred),1,
-                                                  seed=(4,2),dtype=tf.int32)
-        samples = tf.cast(samples,tf.float32)
-        return samples/2.0**(self.bits-1) - 1.0
+        def sampling_fn(pred):
+          samples = tf.random.stateless_categorical(tf.math.log(pred),1,
+                                                    seed=(4,2),dtype=tf.int32)
+          samples = tf.cast(samples,tf.float32)
+          return samples/2.0**(self.bits-1) - 1.0
+      else:
+        @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
+                                                    dtype=tf.float32)])
+        def sampling_fn(pred):
+          samples = tf.argmax(pred,axis=-1)
+          samples = tf.cast(samples,tf.float32)
+          return samples/2.0**(self.bits-1) - 1.0
     elif self.sampling_function == 'gaussian':
-      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
-                                                  dtype=tf.float32)])
-      def sampling_fn(pred):
-        weights, means, log_scales = tf.split(pred, 3, axis=-1)
+      if not deterministic:
+        @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
+                                                    dtype=tf.float32)])
+        def sampling_fn(pred):
+          weights, means, log_scales = tf.split(pred, 3, axis=-1)
 
-        weights = tf.nn.softmax(weights, axis=-1)
-        weights = tf.math.log(weights)
-        selected = tf.random.stateless_categorical(weights,1,seed=(4,2),
-                                                   dtype=tf.int32)
-        selected = tf.squeeze(selected,axis=-1)
+          weights = tf.nn.softmax(weights, axis=-1)
+          weights = tf.math.log(weights)
+          selected = tf.random.stateless_categorical(weights,1,seed=(4,2),
+                                                    dtype=tf.int32)
+          selected = tf.squeeze(selected,axis=-1)
 
 
-        selected = tf.one_hot(selected,depth=self.num_mixtures)
-        mu = tf.reduce_sum(selected*means,axis=-1)
-        scale = tf.reduce_sum(selected*tf.exp(log_scales),axis=-1)
+          selected = tf.one_hot(selected,depth=self.num_mixtures)
+          mu = tf.reduce_sum(selected*means,axis=-1)
+          scale = tf.reduce_sum(selected*tf.exp(log_scales),axis=-1)
 
-        z = tf.random.stateless_normal(shape=tf.shape(mu),seed=(4,2))
+          z = tf.random.stateless_normal(shape=tf.shape(mu),seed=(4,2))
 
-        samples = mu + z *scale
+          samples = mu + z *scale
 
-        samples = tf.expand_dims(samples,axis=-1)
+          samples = tf.expand_dims(samples,axis=-1)
 
-        return tf.clip_by_value(samples,-1,1)
+          return tf.clip_by_value(samples,-1,1)
+      else:
+        @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
+                                                    dtype=tf.float32)])
+        def sampling_fn(pred):
+          weights, means, log_scales = tf.split(pred, 3, axis=-1)
+          weights = tf.nn.softmax(weights, axis=-1)
+          selected = tf.argmax(weights,axis=-1)
+          selected = tf.one_hot(selected,depth=self.num_mixtures)
+          mu = tf.reduce_sum(selected*means,axis=-1)
+
+          samples = mu
+
+          samples = tf.clip_by_value(samples,-1,1)
+          samples = tf.expand_dims(samples,axis=-1)
+          return samples
     elif self.sampling_function == 'logistic':
-      @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
-                                                  dtype=tf.float32)])
-      def sampling_fn(pred):
-        weights, means, log_scales = tf.split(pred, 3, axis=-1)
+      if not deterministic:
+        @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
+                                                    dtype=tf.float32)])
+        def sampling_fn(pred):
+          weights, means, log_scales = tf.split(pred, 3, axis=-1)
 
-        weights = tf.nn.softmax(weights, axis=-1)
-        weights = tf.math.log(weights)
-        selected = tf.random.stateless_categorical(weights,1,
-                                                   seed=(4,2),dtype=tf.int32)
-        selected = tf.squeeze(selected,axis=-1)
+          weights = tf.nn.softmax(weights, axis=-1)
+          weights = tf.math.log(weights)
+          selected = tf.random.stateless_categorical(weights,1,
+                                                    seed=(4,2),dtype=tf.int32)
+          selected = tf.squeeze(selected,axis=-1)
 
 
-        selected = tf.one_hot(selected,depth=self.num_mixtures)
-        mu = tf.reduce_sum(selected*means,axis=-1)
-        scale = tf.reduce_sum(selected*tf.exp(log_scales),axis=-1)
+          selected = tf.one_hot(selected,depth=self.num_mixtures)
+          mu = tf.reduce_sum(selected*means,axis=-1)
+          scale = tf.reduce_sum(selected*tf.exp(log_scales),axis=-1)
 
-        z = tf.random.stateless_uniform(shape=tf.shape(mu),seed=(4,2))
+          z = tf.random.stateless_uniform(shape=tf.shape(mu),seed=(4,2))
 
-        samples = mu + scale*(tf.math.log(z)-tf.math.log(1-z))
+          samples = mu + scale*(tf.math.log(z)-tf.math.log(1-z))
 
-        samples = tf.clip_by_value(samples,-1,1)
-        samples = tf.expand_dims(samples,axis=-1)
-        return samples
+          samples = tf.clip_by_value(samples,-1,1)
+          samples = tf.expand_dims(samples,axis=-1)
+          return samples
+      else:
+        @tf.function(input_signature=[tf.TensorSpec(shape=(None,None),
+                                                    dtype=tf.float32)])
+        def sampling_fn(pred):
+          weights, means, log_scales = tf.split(pred, 3, axis=-1)
+          weights = tf.nn.softmax(weights, axis=-1)
+          selected = tf.argmax(weights,axis=-1)
+          selected = tf.one_hot(selected,depth=self.num_mixtures)
+          mu = tf.reduce_sum(selected*means,axis=-1)
+
+          samples = mu
+
+          samples = tf.clip_by_value(samples,-1,1)
+          samples = tf.expand_dims(samples,axis=-1)
+          return samples
     else:
       raise NotImplementedError(f'Sampling {self.sampling_function}'+
         ' not implemented yet.')
